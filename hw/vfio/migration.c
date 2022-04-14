@@ -92,8 +92,18 @@ static int vfio_migration_set_state(VFIODevice *vbasedev,
 
         mig_state->device_state = recover_state;
         if (ioctl(vbasedev->fd, VFIO_DEVICE_FEATURE, feature)) {
-            hw_error("%s: Failed setting device in recover state, err: %s",
-                     vbasedev->name, strerror(errno));
+            error_report(
+                "%s: Failed setting device in recover state, err: %s. Resetting device",
+                         vbasedev->name, strerror(errno));
+
+            if (ioctl(vbasedev->fd, VFIO_DEVICE_RESET)) {
+                hw_error("%s: Failed resetting device, err: %s", vbasedev->name,
+                         strerror(errno));
+            }
+
+            migration->device_state = VFIO_DEVICE_STATE_RUNNING;
+
+            return -1;
         }
 
         migration->device_state = recover_state;
