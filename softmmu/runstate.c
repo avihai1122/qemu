@@ -325,11 +325,11 @@ void vm_state_notify(VmStep step, RunState state)
 
     trace_vm_state_notify(step, state, RunState_str(state));
 
-    if (step == STEP_RUNNING) {
+    if (step == STEP_RUNNING || step == STEP_PRE_RUNNING) {
         QTAILQ_FOREACH_SAFE(e, &vm_change_state_head, entries, next) {
             e->cb(e->opaque, step, state);
         }
-    } else if (step == STEP_STOP) {
+    } else if (step == STEP_STOP || step == STEP_PRE_STOP) {
         QTAILQ_FOREACH_REVERSE_SAFE(e, &vm_change_state_head, entries, next) {
             e->cb(e->opaque, step, state);
         }
