@@ -895,11 +895,11 @@ sev_launch_finish(SevGuestState *sev)
 }
 
 static void
-sev_vm_state_change(void *opaque, bool running, RunState state)
+sev_vm_state_change(void *opaque, VmStep step, RunState state)
 {
     SevGuestState *sev = opaque;
 
-    if (running) {
+    if (step == STEP_RUNNING) {
         if (!sev_check_state(sev, SEV_STATE_RUNNING)) {
             sev_launch_finish(sev);
         }

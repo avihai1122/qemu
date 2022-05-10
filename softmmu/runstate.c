@@ -319,19 +319,19 @@ void qemu_del_vm_change_state_handler(VMChangeStateEntry *e)
     g_free(e);
 }
 
-void vm_state_notify(bool running, RunState state)
+void vm_state_notify(VmStep step, RunState state)
 {
     VMChangeStateEntry *e, *next;
 
-    trace_vm_state_notify(running, state, RunState_str(state));
+    trace_vm_state_notify(step, state, RunState_str(state));
 
-    if (running) {
+    if (step == STEP_RUNNING) {
         QTAILQ_FOREACH_SAFE(e, &vm_change_state_head, entries, next) {
-            e->cb(e->opaque, running, state);
+            e->cb(e->opaque, step, state);
         }
-    } else {
+    } else if (step == STEP_STOP) {
         QTAILQ_FOREACH_REVERSE_SAFE(e, &vm_change_state_head, entries, next) {
-            e->cb(e->opaque, running, state);
+            e->cb(e->opaque, step, state);
         }
     }
 }

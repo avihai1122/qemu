@@ -234,12 +234,16 @@ static void kvm_pit_irq_control(void *opaque, int n, int enable)
     kvm_pit_put(pit);
 }
 
-static void kvm_pit_vm_state_change(void *opaque, bool running,
+static void kvm_pit_vm_state_change(void *opaque, VmStep step,
                                     RunState state)
 {
     KVMPITState *s = opaque;
 
-    if (running) {
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    if (step == STEP_RUNNING) {
         kvm_pit_update_clock_offset(s);
         kvm_pit_put(PIT_COMMON(s));
         s->vm_stopped = false;

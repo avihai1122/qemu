@@ -747,14 +747,14 @@ static void do_vapic_enable(CPUState *cs, run_on_cpu_data data)
     s->state = VAPIC_ACTIVE;
 }
 
-static void kvmvapic_vm_state_change(void *opaque, bool running,
+static void kvmvapic_vm_state_change(void *opaque, VmStep step,
                                      RunState state)
 {
     MachineState *ms = MACHINE(qdev_get_machine());
     VAPICROMState *s = opaque;
     uint8_t *zero;
 
-    if (!running) {
+    if (step != STEP_RUNNING) {
         return;
     }
 

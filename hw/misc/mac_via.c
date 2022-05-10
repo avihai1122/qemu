@@ -952,9 +952,13 @@ static const MemoryRegionOps mos6522_q800_via2_ops = {
     },
 };
 
-static void via1_postload_update_cb(void *opaque, bool running, RunState state)
+static void via1_postload_update_cb(void *opaque, VmStep step, RunState state)
 {
     MOS6522Q800VIA1State *v1s = MOS6522_Q800_VIA1(opaque);
+
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
 
     qemu_del_vm_change_state_handler(v1s->vmstate);
     v1s->vmstate = NULL;

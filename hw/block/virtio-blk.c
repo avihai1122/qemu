@@ -863,14 +863,14 @@ static void virtio_blk_dma_restart_bh(void *opaque)
     virtio_blk_process_queued_requests(s, true);
 }
 
-static void virtio_blk_dma_restart_cb(void *opaque, bool running,
+static void virtio_blk_dma_restart_cb(void *opaque, VmStep step,
                                       RunState state)
 {
     VirtIOBlock *s = opaque;
     BusState *qbus = BUS(qdev_get_parent_bus(DEVICE(s)));
     VirtioBusState *bus = VIRTIO_BUS(qbus);
 
-    if (!running) {
+    if (step != STEP_RUNNING) {
         return;
     }
 

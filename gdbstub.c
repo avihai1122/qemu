@@ -2821,13 +2821,20 @@ void gdb_set_stop_cpu(CPUState *cpu)
 }
 
 #ifndef CONFIG_USER_ONLY
-static void gdb_vm_state_change(void *opaque, bool running, RunState state)
+static void gdb_vm_state_change(void *opaque, VmStep step, RunState state)
 {
     CPUState *cpu = gdbserver_state.c_cpu;
     g_autoptr(GString) buf = g_string_new(NULL);
     g_autoptr(GString) tid = g_string_new(NULL);
     const char *type;
+    bool running;
     int ret;
+
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    running = (step == STEP_RUNNING);
 
     if (running || gdbserver_state.state == RS_INACTIVE) {
         return;

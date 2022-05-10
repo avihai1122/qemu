@@ -2441,9 +2441,13 @@ static int usb_ehci_post_load(void *opaque, int version_id)
     return 0;
 }
 
-static void usb_ehci_vm_state_change(void *opaque, bool running, RunState state)
+static void usb_ehci_vm_state_change(void *opaque, VmStep step, RunState state)
 {
     EHCIState *ehci = opaque;
+
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
 
     /*
      * We don't migrate the EHCIQueue-s, instead we rebuild them for the

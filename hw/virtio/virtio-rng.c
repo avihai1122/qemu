@@ -133,19 +133,23 @@ static uint64_t get_features(VirtIODevice *vdev, uint64_t f, Error **errp)
     return f;
 }
 
-static void virtio_rng_vm_state_change(void *opaque, bool running,
+static void virtio_rng_vm_state_change(void *opaque, VmStep step,
                                        RunState state)
 {
     VirtIORNG *vrng = opaque;
 
-    trace_virtio_rng_vm_state_change(vrng, running, state);
+    if (step != STEP_STOP && step != STEP_RUNNING) {
+        return;
+    }
+
+    trace_virtio_rng_vm_state_change(vrng, step, state);
 
     /* We may have an element ready but couldn't process it due to a quota
      * limit or because CPU was stopped.  Make sure to try again when the
      * CPU restart.
      */
 
-    if (running && is_guest_ready(vrng)) {
+    if (step == STEP_RUNNING && is_guest_ready(vrng)) {
         virtio_rng_process(vrng);
     }
 }

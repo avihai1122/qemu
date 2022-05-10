@@ -375,13 +375,17 @@ static const SaveVMHandlers savevm_vfio_handlers = {
 
 /* ---------------------------------------------------------------------- */
 
-static void vfio_vmstate_change(void *opaque, bool running, RunState state)
+static void vfio_vmstate_change(void *opaque, VmStep step, RunState state)
 {
     VFIODevice *vbasedev = opaque;
     enum vfio_device_mig_state new_state;
     int ret;
 
-    if (running) {
+    if (step != STEP_STOP && step != STEP_RUNNING) {
+        return;
+    }
+
+    if (step == STEP_RUNNING) {
         new_state = VFIO_DEVICE_STATE_RUNNING;
     } else {
         new_state = VFIO_DEVICE_STATE_STOP;
@@ -399,7 +403,7 @@ static void vfio_vmstate_change(void *opaque, bool running, RunState state)
         }
     }
 
-    trace_vfio_vmstate_change(vbasedev->name, running, RunState_str(state),
+    trace_vfio_vmstate_change(vbasedev->name, step, RunState_str(state),
                               mig_state_to_str(new_state));
 }
 

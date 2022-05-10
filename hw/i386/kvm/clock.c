@@ -161,14 +161,20 @@ static void do_kvmclock_ctrl(CPUState *cpu, run_on_cpu_data data)
     }
 }
 
-static void kvmclock_vm_state_change(void *opaque, bool running,
+static void kvmclock_vm_state_change(void *opaque, VmStep step,
                                      RunState state)
 {
     KVMClockState *s = opaque;
     CPUState *cpu;
     int cap_clock_ctrl = kvm_check_extension(kvm_state, KVM_CAP_KVMCLOCK_CTRL);
+    bool running;
     int ret;
 
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    running = (step == STEP_RUNNING);
     if (running) {
         struct kvm_clock_data data = {};
 

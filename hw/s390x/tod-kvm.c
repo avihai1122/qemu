@@ -78,11 +78,18 @@ static void kvm_s390_tod_set(S390TODState *td, const S390TOD *tod, Error **errp)
     }
 }
 
-static void kvm_s390_tod_vm_state_change(void *opaque, bool running,
+static void kvm_s390_tod_vm_state_change(void *opaque, VmStep step,
                                          RunState state)
 {
     S390TODState *td = opaque;
     Error *local_err = NULL;
+    bool running;
+
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    running = STEP_RUNNING == step;
 
     if (running && td->stopped) {
         /* Set the old TOD when running the VM - start the TOD clock. */
