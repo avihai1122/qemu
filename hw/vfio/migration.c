@@ -69,8 +69,12 @@ static const char *mig_state_to_str(enum vfio_device_mig_state state)
         return "STOP_COPY";
     case VFIO_DEVICE_STATE_RESUMING:
         return "RESUMING";
+    case VFIO_DEVICE_STATE_RUNNING_P2P:
+        return "RUNNING_P2P";
     case VFIO_DEVICE_STATE_PRE_COPY:
         return "PRE_COPY";
+    case VFIO_DEVICE_STATE_PRE_COPY_P2P:
+        return "PRE_COPY_P2P";
     default:
         return "UNKNOWN STATE";
     }
@@ -417,7 +421,8 @@ static void vfio_state_pending_exact(void *opaque, uint64_t *must_precopy,
     vfio_query_stop_copy_size(vbasedev, &stop_copy_size);
     *must_precopy += stop_copy_size;
 
-    if (migration->device_state == VFIO_DEVICE_STATE_PRE_COPY) {
+    if (migration->device_state == VFIO_DEVICE_STATE_PRE_COPY ||
+        migration->device_state == VFIO_DEVICE_STATE_PRE_COPY_P2P) {
         migration->precopy_init_size = 0;
         migration->precopy_dirty_size = 0;
         vfio_query_precopy_size(migration);
@@ -436,7 +441,8 @@ static bool vfio_is_active_iterate(void *opaque)
     VFIODevice *vbasedev = opaque;
     VFIOMigration *migration = vbasedev->migration;
 
-    return migration->device_state == VFIO_DEVICE_STATE_PRE_COPY;
+    return migration->device_state == VFIO_DEVICE_STATE_PRE_COPY ||
+           migration->device_state == VFIO_DEVICE_STATE_PRE_COPY_P2P;
 }
 
 static int vfio_save_iterate(QEMUFile *f, void *opaque)
@@ -640,18 +646,29 @@ static void vfio_vmstate_change(void *opaque, VmStep step, RunState state)
     enum vfio_device_mig_state new_state;
     int ret;
 
-    if (step != STEP_STOP && step != STEP_RUNNING) {
+    if (step != STEP_STOP && step != STEP_RUNNING &&
+        step != STEP_PRE_RUNNING && step != STEP_PRE_STOP) {
+        return;
+    }
+
+    if ((step == STEP_PRE_RUNNING || step == STEP_PRE_STOP) &&
+        !(vbasedev->migration->mig_flags & VFIO_MIGRATION_P2P)) {
         return;
     }
 
     if (step == STEP_RUNNING) {
         new_state = VFIO_DEVICE_STATE_RUNNING;
-    } else {
+    } else if (step == STEP_STOP) {
         new_state =
-            (migration->device_state == VFIO_DEVICE_STATE_PRE_COPY &&
+            ((migration->device_state == VFIO_DEVICE_STATE_PRE_COPY ||
+              migration->device_state == VFIO_DEVICE_STATE_PRE_COPY_P2P) &&
              (state == RUN_STATE_FINISH_MIGRATE || state == RUN_STATE_PAUSED)) ?
                 VFIO_DEVICE_STATE_STOP_COPY :
                 VFIO_DEVICE_STATE_STOP;
+    } else {
+        new_state = (migration->device_state == VFIO_DEVICE_STATE_PRE_COPY) ?
+                        VFIO_DEVICE_STATE_PRE_COPY_P2P :
+                        VFIO_DEVICE_STATE_RUNNING_P2P;
     }
 
     /*
