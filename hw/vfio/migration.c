@@ -381,14 +381,22 @@ static void vfio_vmstate_change(void *opaque, VmStep step, RunState state)
     enum vfio_device_mig_state new_state;
     int ret;
 
-    if (step != STEP_STOP && step != STEP_RUNNING) {
+    if (step != STEP_STOP && step != STEP_RUNNING &&
+        step != STEP_PRE_RUNNING && step != STEP_PRE_STOP) {
+        return;
+    }
+
+    if ((step == STEP_PRE_RUNNING || step == STEP_PRE_STOP) &&
+        !(vbasedev->migration->mig_flags & VFIO_MIGRATION_P2P)) {
         return;
     }
 
     if (step == STEP_RUNNING) {
         new_state = VFIO_DEVICE_STATE_RUNNING;
-    } else {
+    } else if (step == STEP_STOP) {
         new_state = VFIO_DEVICE_STATE_STOP;
+    } else {
+        new_state = VFIO_DEVICE_STATE_RUNNING_P2P;
     }
 
     ret = vfio_migration_set_state(vbasedev, new_state,
