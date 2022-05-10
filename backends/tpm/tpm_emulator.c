@@ -899,15 +899,16 @@ static int tpm_emulator_pre_save(void *opaque)
     return ret;
 }
 
-static void tpm_emulator_vm_state_change(void *opaque, bool running,
+static void tpm_emulator_vm_state_change(void *opaque, VmStep step,
                                          RunState state)
 {
     TPMBackend *tb = opaque;
     TPMEmulator *tpm_emu = TPM_EMULATOR(tb);
 
-    trace_tpm_emulator_vm_state_change(running, state);
+    trace_tpm_emulator_vm_state_change(step, state);
 
-    if (!running || state != RUN_STATE_RUNNING || !tpm_emu->relock_storage) {
+    if (step != STEP_RUNNING || state != RUN_STATE_RUNNING ||
+        !tpm_emu->relock_storage) {
         return;
     }
 

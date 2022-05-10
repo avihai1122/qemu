@@ -1018,9 +1018,13 @@ void pflash_cfi01_legacy_drive(PFlashCFI01 *fl, DriveInfo *dinfo)
     loc_pop(&loc);
 }
 
-static void postload_update_cb(void *opaque, bool running, RunState state)
+static void postload_update_cb(void *opaque, VmStep step, RunState state)
 {
     PFlashCFI01 *pfl = opaque;
+
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
 
     /* This is called after bdrv_activate_all.  */
     qemu_del_vm_change_state_handler(pfl->vmstate);

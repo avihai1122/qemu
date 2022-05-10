@@ -1399,9 +1399,13 @@ static void usbredir_chardev_event(void *opaque, QEMUChrEvent event)
  * init + destroy
  */
 
-static void usbredir_vm_state_change(void *priv, bool running, RunState state)
+static void usbredir_vm_state_change(void *priv, VmStep step, RunState state)
 {
     USBRedirDevice *dev = priv;
+
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
 
     if (state == RUN_STATE_RUNNING && dev->parser != NULL) {
         usbredirparser_do_write(dev->parser); /* Flush any pending writes */

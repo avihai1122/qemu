@@ -668,8 +668,12 @@ static const DisplayGLCtxOps egl_ctx_ops = {
 
 /** QEMU Events **/
 
-static void gd_change_runstate(void *opaque, bool running, RunState state)
+static void gd_change_runstate(void *opaque, VmStep step, RunState state)
 {
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
     GtkDisplayState *s = opaque;
 
     gd_update_caption(s);

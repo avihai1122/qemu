@@ -3391,11 +3391,15 @@ e1000e_autoneg_resume(E1000ECore *core)
 }
 
 static void
-e1000e_vm_state_change(void *opaque, bool running, RunState state)
+e1000e_vm_state_change(void *opaque, VmStep step, RunState state)
 {
     E1000ECore *core = opaque;
 
-    if (running) {
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    if (step == STEP_RUNNING) {
         trace_e1000e_vm_state_running();
         e1000e_intrmgr_resume(core);
         e1000e_autoneg_resume(core);

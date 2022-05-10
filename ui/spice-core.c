@@ -633,10 +633,14 @@ static int add_channel(void *opaque, const char *name, const char *value,
     return 0;
 }
 
-static void vm_change_state_handler(void *opaque, bool running,
+static void vm_change_state_handler(void *opaque, VmStep step,
                                     RunState state)
 {
-    if (running) {
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    if (step == STEP_RUNNING) {
         qemu_spice_display_start();
     } else if (state != RUN_STATE_PAUSED) {
         qemu_spice_display_stop();

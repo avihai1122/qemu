@@ -853,12 +853,16 @@ MemTxAttrs kvm_arch_post_run(CPUState *cs, struct kvm_run *run)
     return MEMTXATTRS_UNSPECIFIED;
 }
 
-void kvm_arm_vm_state_change(void *opaque, bool running, RunState state)
+void kvm_arm_vm_state_change(void *opaque, VmStep step, RunState state)
 {
     CPUState *cs = opaque;
     ARMCPU *cpu = ARM_CPU(cs);
 
-    if (running) {
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    if (step == STEP_RUNNING) {
         if (cpu->kvm_adjvtime) {
             kvm_arm_put_virtual_time(cs);
         }

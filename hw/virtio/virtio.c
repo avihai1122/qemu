@@ -3117,13 +3117,20 @@ void virtio_cleanup(VirtIODevice *vdev)
     qemu_del_vm_change_state_handler(vdev->vmstate);
 }
 
-static void virtio_vmstate_change(void *opaque, bool running, RunState state)
+static void virtio_vmstate_change(void *opaque, VmStep step, RunState state)
 {
     VirtIODevice *vdev = opaque;
     BusState *qbus = qdev_get_parent_bus(DEVICE(vdev));
     VirtioBusClass *k = VIRTIO_BUS_GET_CLASS(qbus);
-    bool backend_run = running && virtio_device_started(vdev, vdev->status);
-    vdev->vm_running = running;
+    bool backend_run;
+
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    backend_run = (step == STEP_RUNNING) &&
+                   virtio_device_started(vdev, vdev->status);
+    vdev->vm_running = (step == STEP_RUNNING);
 
     if (backend_run) {
         virtio_set_status(vdev, vdev->status);

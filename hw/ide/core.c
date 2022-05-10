@@ -2746,11 +2746,11 @@ static void ide_restart_bh(void *opaque)
     }
 }
 
-static void ide_restart_cb(void *opaque, bool running, RunState state)
+static void ide_restart_cb(void *opaque, VmStep step, RunState state)
 {
     IDEBus *bus = opaque;
 
-    if (!running)
+    if (step != STEP_RUNNING)
         return;
 
     if (!bus->bh) {

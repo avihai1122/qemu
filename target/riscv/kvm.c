@@ -378,12 +378,16 @@ unsigned long kvm_arch_vcpu_id(CPUState *cpu)
     return cpu->cpu_index;
 }
 
-static void kvm_riscv_vm_state_change(void *opaque, bool running,
+static void kvm_riscv_vm_state_change(void *opaque, VmStep step,
                                       RunState state)
 {
     CPUState *cs = opaque;
 
-    if (running) {
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    if (step == STEP_RUNNING) {
         kvm_riscv_put_regs_timer(cs);
     } else {
         kvm_riscv_get_regs_timer(cs);

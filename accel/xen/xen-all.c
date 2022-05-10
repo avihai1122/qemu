@@ -57,10 +57,10 @@ static void xenstore_record_dm_state(const char *state)
 }
 
 
-static void xen_change_state_handler(void *opaque, bool running,
+static void xen_change_state_handler(void *opaque, VmStep step,
                                      RunState state)
 {
-    if (running) {
+    if (step == STEP_RUNNING) {
         /* record state running */
         xenstore_record_dm_state("running");
     }

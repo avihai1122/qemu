@@ -316,12 +316,12 @@ static void ppc_booke_timer_reset_handle(void *opaque)
  * action will be taken. To avoid this we always clear the watchdog state when
  * state changes to running.
  */
-static void cpu_state_change_handler(void *opaque, bool running, RunState state)
+static void cpu_state_change_handler(void *opaque, VmStep step, RunState state)
 {
     PowerPCCPU *cpu = opaque;
     CPUPPCState *env = &cpu->env;
 
-    if (!running) {
+    if (step != STEP_RUNNING) {
         return;
     }
 

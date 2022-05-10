@@ -3795,11 +3795,15 @@ igb_autoneg_resume(IGBCore *core)
 }
 
 static void
-igb_vm_state_change(void *opaque, bool running, RunState state)
+igb_vm_state_change(void *opaque, VmStep step, RunState state)
 {
     IGBCore *core = opaque;
 
-    if (running) {
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    if (step == STEP_RUNNING) {
         trace_e1000e_vm_state_running();
         igb_intrmgr_resume(core);
         igb_autoneg_resume(core);

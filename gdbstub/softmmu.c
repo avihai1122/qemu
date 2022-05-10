@@ -117,7 +117,7 @@ void gdb_syscall_handling(const char *syscall_packet)
     qemu_cpu_kick(gdbserver_state.c_cpu);
 }
 
-static void gdb_vm_state_change(void *opaque, bool running, RunState state)
+static void gdb_vm_state_change(void *opaque, VmStep step, RunState state)
 {
     CPUState *cpu = gdbserver_state.c_cpu;
     g_autoptr(GString) buf = g_string_new(NULL);
@@ -125,7 +125,7 @@ static void gdb_vm_state_change(void *opaque, bool running, RunState state)
     const char *type;
     int ret;
 
-    if (running || gdbserver_state.state == RS_INACTIVE) {
+    if (step != STEP_STOP || gdbserver_state.state == RS_INACTIVE) {
         return;
     }
 

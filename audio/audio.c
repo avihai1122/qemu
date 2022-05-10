@@ -1579,13 +1579,19 @@ static int audio_driver_init(AudioState *s, struct audio_driver *drv,
     }
 }
 
-static void audio_vm_change_state_handler (void *opaque, bool running,
-                                           RunState state)
+static void audio_vm_change_state_handler(void *opaque, VmStep step,
+                                          RunState state)
 {
     AudioState *s = opaque;
     HWVoiceOut *hwo = NULL;
     HWVoiceIn *hwi = NULL;
+    bool running;
 
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    running = (step == STEP_RUNNING);
     s->vm_running = running;
     while ((hwo = audio_pcm_hw_find_any_enabled_out(s, hwo))) {
         if (hwo->pcm_ops->enable_out) {

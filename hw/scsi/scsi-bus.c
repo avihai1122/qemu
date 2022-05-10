@@ -182,13 +182,14 @@ void scsi_req_retry(SCSIRequest *req)
     req->retry = true;
 }
 
-static void scsi_dma_restart_cb(void *opaque, bool running, RunState state)
+static void scsi_dma_restart_cb(void *opaque, VmStep step, RunState state)
 {
     SCSIDevice *s = opaque;
 
-    if (!running) {
+    if (step != STEP_RUNNING) {
         return;
     }
+
     if (!s->bh) {
         AioContext *ctx = blk_get_aio_context(s->conf.blk);
         /* The reference is dropped in scsi_dma_restart_bh.*/

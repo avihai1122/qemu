@@ -2939,10 +2939,10 @@ static void memory_global_dirty_log_stop_postponed_run(void)
     vmstate_change = NULL;
 }
 
-static void memory_vm_change_state_handler(void *opaque, bool running,
+static void memory_vm_change_state_handler(void *opaque, VmStep step,
                                            RunState state)
 {
-    if (running) {
+    if (step == STEP_RUNNING) {
         memory_global_dirty_log_stop_postponed_run();
     }
 }

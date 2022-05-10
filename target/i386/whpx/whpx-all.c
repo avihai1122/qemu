@@ -2141,11 +2141,11 @@ void whpx_cpu_synchronize_pre_resume(bool step_pending)
 
 static Error *whpx_migration_blocker;
 
-static void whpx_cpu_update_state(void *opaque, bool running, RunState state)
+static void whpx_cpu_update_state(void *opaque, VmStep step, RunState state)
 {
     CPUX86State *env = opaque;
 
-    if (running) {
+    if (step == STEP_RUNNING) {
         env->tsc_valid = false;
     }
 }

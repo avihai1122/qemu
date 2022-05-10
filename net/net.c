@@ -1461,11 +1461,18 @@ void qmp_set_link(const char *name, bool up, Error **errp)
     }
 }
 
-static void net_vm_change_state_handler(void *opaque, bool running,
+static void net_vm_change_state_handler(void *opaque, VmStep step,
                                         RunState state)
 {
     NetClientState *nc;
     NetClientState *tmp;
+    bool running;
+
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    running = (step == STEP_RUNNING);
 
     QTAILQ_FOREACH_SAFE(nc, &net_clients, next, tmp) {
         if (running) {

@@ -976,12 +976,16 @@ static void timebase_load(PPCTimebase *tb)
     }
 }
 
-void cpu_ppc_clock_vm_state_change(void *opaque, bool running,
+void cpu_ppc_clock_vm_state_change(void *opaque, VmStep step,
                                    RunState state)
 {
     PPCTimebase *tb = opaque;
 
-    if (running) {
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    if (step == STEP_RUNNING) {
         timebase_load(tb);
     } else {
         timebase_save(tb);

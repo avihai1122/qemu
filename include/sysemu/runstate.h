@@ -10,7 +10,12 @@ bool runstate_is_running(void);
 bool runstate_needs_reset(void);
 bool runstate_store(char *str, size_t size);
 
-typedef void VMChangeStateHandler(void *opaque, bool running, RunState state);
+typedef enum VmStep {
+    STEP_STOP,
+    STEP_RUNNING,
+} VmStep;
+
+typedef void VMChangeStateHandler(void *opaque, VmStep step, RunState state);
 
 VMChangeStateEntry *qemu_add_vm_change_state_handler(VMChangeStateHandler *cb,
                                                      void *opaque);
@@ -20,13 +25,14 @@ VMChangeStateEntry *qdev_add_vm_change_state_handler(DeviceState *dev,
                                                      VMChangeStateHandler *cb,
                                                      void *opaque);
 void qemu_del_vm_change_state_handler(VMChangeStateEntry *e);
+
 /**
  * vm_state_notify: Notify the state of the VM
  *
- * @running: whether the VM is running or not.
+ * @step: The #VmStep of the VM.
  * @state: the #RunState of the VM.
  */
-void vm_state_notify(bool running, RunState state);
+void vm_state_notify(VmStep step, RunState state);
 
 static inline bool shutdown_caused_by_guest(ShutdownCause cause)
 {

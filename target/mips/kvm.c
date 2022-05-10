@@ -37,7 +37,7 @@ const KVMCapabilityInfo kvm_arch_required_capabilities[] = {
     KVM_CAP_LAST_INFO
 };
 
-static void kvm_mips_update_state(void *opaque, bool running, RunState state);
+static void kvm_mips_update_state(void *opaque, VmStep step, RunState state);
 
 unsigned long kvm_arch_vcpu_id(CPUState *cs)
 {
@@ -552,11 +552,18 @@ static int kvm_mips_restore_count(CPUState *cs)
 /*
  * Handle the VM clock being started or stopped
  */
-static void kvm_mips_update_state(void *opaque, bool running, RunState state)
+static void kvm_mips_update_state(void *opaque, VmStep step, RunState state)
 {
     CPUState *cs = opaque;
     int ret;
     uint64_t count_resume;
+    bool running;
+
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    running = step == STEP_RUNNING;
 
     /*
      * If state is already dirty (synced to QEMU) then the KVM timer state is

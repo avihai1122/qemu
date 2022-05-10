@@ -1227,12 +1227,16 @@ static void xen_main_loop_prepare(XenIOState *state)
 }
 
 
-static void xen_hvm_change_state_handler(void *opaque, bool running,
+static void xen_hvm_change_state_handler(void *opaque, VmStep step,
                                          RunState rstate)
 {
     XenIOState *state = opaque;
 
-    if (running) {
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    if (step == STEP_RUNNING) {
         xen_main_loop_prepare(state);
     }
 

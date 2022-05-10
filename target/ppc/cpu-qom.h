@@ -22,6 +22,7 @@
 
 #include "hw/core/cpu.h"
 #include "qom/object.h"
+#include "sysemu/runstate.h"
 
 #ifdef TARGET_PPC64
 #define TYPE_POWERPC_CPU "powerpc64-cpu"
@@ -209,7 +210,7 @@ extern const VMStateDescription vmstate_ppc_timebase;
     .offset     = vmstate_offset_value(_state, _field, PPCTimebase),  \
 }
 
-void cpu_ppc_clock_vm_state_change(void *opaque, bool running,
+void cpu_ppc_clock_vm_state_change(void *opaque, VmStep step,
                                    RunState state);
 #endif
 

@@ -215,10 +215,13 @@ static int spapr_nvram_pre_load(void *opaque)
     return 0;
 }
 
-static void postload_update_cb(void *opaque, bool running, RunState state)
+static void postload_update_cb(void *opaque, VmStep step, RunState state)
 {
     SpaprNvram *nvram = opaque;
 
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
     /* This is called after bdrv_activate_all.  */
 
     qemu_del_vm_change_state_handler(nvram->vmstate);

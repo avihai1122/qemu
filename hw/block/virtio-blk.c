@@ -843,12 +843,12 @@ static void virtio_blk_dma_restart_bh(void *opaque)
     aio_context_release(blk_get_aio_context(s->conf.conf.blk));
 }
 
-static void virtio_blk_dma_restart_cb(void *opaque, bool running,
+static void virtio_blk_dma_restart_cb(void *opaque, VmStep step,
                                       RunState state)
 {
     VirtIOBlock *s = opaque;
 
-    if (!running) {
+    if (step != STEP_RUNNING) {
         return;
     }
 

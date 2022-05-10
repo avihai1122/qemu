@@ -755,14 +755,14 @@ static const ARMCPRegInfo gicv3_cpuif_reginfo[] = {
  *
  * The tables get flushed to guest RAM whenever the VM gets stopped.
  */
-static void vm_change_state_handler(void *opaque, bool running,
+static void vm_change_state_handler(void *opaque, VmStep step,
                                     RunState state)
 {
     GICv3State *s = (GICv3State *)opaque;
     Error *err = NULL;
     int ret;
 
-    if (running) {
+    if (step != STEP_STOP) {
         return;
     }
 

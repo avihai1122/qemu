@@ -1477,11 +1477,15 @@ static const VMStateDescription vmstate_hvf_vtimer = {
     },
 };
 
-static void hvf_vm_state_change(void *opaque, bool running, RunState state)
+static void hvf_vm_state_change(void *opaque, VmStep step, RunState state)
 {
     HVFVTimer *s = opaque;
 
-    if (running) {
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    if (step == STEP_RUNNING) {
         /* Update vtimer offset on all CPUs */
         hvf_state->vtimer_offset = mach_absolute_time() - s->vtimer_val;
         cpu_synchronize_all_states();

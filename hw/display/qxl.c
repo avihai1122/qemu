@@ -1975,12 +1975,16 @@ static void qxl_dirty_surfaces(PCIQXLDevice *qxl)
     }
 }
 
-static void qxl_vm_change_state_handler(void *opaque, bool running,
+static void qxl_vm_change_state_handler(void *opaque, VmStep step,
                                         RunState state)
 {
     PCIQXLDevice *qxl = opaque;
 
-    if (running) {
+    if (step != STEP_RUNNING && step != STEP_STOP) {
+        return;
+    }
+
+    if (step == STEP_RUNNING) {
         /*
          * if qxl_send_events was called from spice server context before
          * migration ended, qxl_update_irq for these events might not have been
