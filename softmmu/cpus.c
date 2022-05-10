@@ -260,6 +260,7 @@ static int do_vm_stop(RunState state, bool send_stop)
         runstate_set(state);
         cpu_disable_ticks();
         pause_all_vcpus();
+        vm_state_notify(STEP_PRE_STOP, state);
         vm_state_notify(STEP_STOP, state);
         if (send_stop) {
             qapi_event_send_stop();
@@ -714,6 +715,7 @@ int vm_prepare_start(bool step_pending)
 
     cpu_enable_ticks();
     runstate_set(RUN_STATE_RUNNING);
+    vm_state_notify(STEP_PRE_RUNNING, RUN_STATE_RUNNING);
     vm_state_notify(STEP_RUNNING, RUN_STATE_RUNNING);
     return 0;
 }

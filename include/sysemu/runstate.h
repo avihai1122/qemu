@@ -11,7 +11,9 @@ bool runstate_needs_reset(void);
 bool runstate_store(char *str, size_t size);
 
 typedef enum VmStep {
+    STEP_PRE_STOP,
     STEP_STOP,
+    STEP_PRE_RUNNING,
     STEP_RUNNING,
 } VmStep;
 
