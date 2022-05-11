@@ -392,6 +392,60 @@ static bool vfio_devices_all_running_and_saving(VFIOContainer *container)
     return true;
 }
 
+static int vfio_iova_mark_dirty(uint64_t iova, uint64_t size,
+                                ram_addr_t ram_addr)
+{
+    unsigned long *bitmap;
+    uint64_t pages;
+
+    pages = REAL_HOST_PAGE_ALIGN(size) / qemu_real_host_page_size();
+    bitmap = g_try_malloc0(ROUND_UP(pages, sizeof(__u64) * BITS_PER_BYTE) /
+                           BITS_PER_BYTE);
+    if (!bitmap) {
+        return -ENOMEM;
+    }
+
+    bitmap_set(bitmap, 0, pages);
+    cpu_physical_memory_set_dirty_lebitmap(bitmap, ram_addr, pages);
+    g_free(bitmap);
+
+    return 0;
+}
+
+static int vfio_dma_unmap_mark_dirty(VFIOContainer *container, hwaddr iova,
+                                     ram_addr_t size,
+                                     IOMMUTLBEntry *iotlb)
+{
+    struct vfio_iommu_type1_dma_unmap unmap = {
+        .argsz = sizeof(unmap),
+        .flags = 0,
+        .iova = iova,
+        .size = size,
+    };
+    unsigned long *bitmap;
+    uint64_t pages;
+
+    pages = REAL_HOST_PAGE_ALIGN(size) / qemu_real_host_page_size();
+    bitmap = g_try_malloc0(ROUND_UP(pages, sizeof(__u64) * BITS_PER_BYTE) /
+                           BITS_PER_BYTE);
+    if (!bitmap) {
+        return -ENOMEM;
+    }
+
+    if (ioctl(container->fd, VFIO_IOMMU_UNMAP_DMA, &unmap)) {
+        error_report("VFIO_UNMAP_DMA failed : %m");
+        g_free(bitmap);
+        return -errno;
+    }
+
+    bitmap_set(bitmap, 0, pages);
+    cpu_physical_memory_set_dirty_lebitmap(bitmap, iotlb->translated_addr,
+                                           pages);
+    g_free(bitmap);
+
+    return 0;
+}
+
 static int vfio_dma_unmap_bitmap(VFIOContainer *container,
                                  hwaddr iova, ram_addr_t size,
                                  IOMMUTLBEntry *iotlb)
@@ -400,6 +454,10 @@ static int vfio_dma_unmap_bitmap(VFIOContainer *container,
     struct vfio_bitmap *bitmap;
     uint64_t pages = REAL_HOST_PAGE_ALIGN(size) / qemu_real_host_page_size();
     int ret;
+
+    if (!container->dirty_pages_supported) {
+        return vfio_dma_unmap_mark_dirty(container, iova, size, iotlb);
+    }
 
     unmap = g_malloc0(sizeof(*unmap) + sizeof(*bitmap));
 
@@ -460,8 +518,7 @@ static int vfio_dma_unmap(VFIOContainer *container,
         .size = size,
     };
 
-    if (iotlb && container->dirty_pages_supported &&
-        vfio_devices_all_running_and_saving(container)) {
+    if (iotlb && vfio_devices_all_running_and_saving(container)) {
         return vfio_dma_unmap_bitmap(container, iova, size, iotlb);
     }
 
@@ -1274,14 +1331,18 @@ static void vfio_listener_log_global_start(MemoryListener *listener)
 {
     VFIOContainer *container = container_of(listener, VFIOContainer, listener);
 
-    vfio_set_dirty_page_tracking(container, true);
+    if (container->dirty_pages_supported) {
+        vfio_set_dirty_page_tracking(container, true);
+    }
 }
 
 static void vfio_listener_log_global_stop(MemoryListener *listener)
 {
     VFIOContainer *container = container_of(listener, VFIOContainer, listener);
 
-    vfio_set_dirty_page_tracking(container, false);
+    if (container->dirty_pages_supported) {
+        vfio_set_dirty_page_tracking(container, false);
+    }
 }
 
 static int vfio_get_dirty_bitmap(VFIOContainer *container, uint64_t iova,
@@ -1289,8 +1350,23 @@ static int vfio_get_dirty_bitmap(VFIOContainer *container, uint64_t iova,
 {
     struct vfio_iommu_type1_dirty_bitmap *dbitmap;
     struct vfio_iommu_type1_dirty_bitmap_get *range;
+    uint64_t bitmap_size;
     uint64_t pages;
     int ret;
+
+    pages = REAL_HOST_PAGE_ALIGN(size) / qemu_real_host_page_size();
+    bitmap_size = ROUND_UP(pages, sizeof(__u64) * BITS_PER_BYTE) /
+                                  BITS_PER_BYTE;
+
+    if (!container->dirty_pages_supported) {
+        ret = vfio_iova_mark_dirty(iova, size, ram_addr);
+        if (!ret) {
+            trace_vfio_get_dirty_bitmap(container->fd, iova, size, bitmap_size,
+                                        ram_addr);
+        }
+
+        return ret;
+    }
 
     dbitmap = g_malloc0(sizeof(*dbitmap) + sizeof(*range));
 
@@ -1307,9 +1383,7 @@ static int vfio_get_dirty_bitmap(VFIOContainer *container, uint64_t iova,
      */
     range->bitmap.pgsize = qemu_real_host_page_size();
 
-    pages = REAL_HOST_PAGE_ALIGN(range->size) / qemu_real_host_page_size();
-    range->bitmap.size = ROUND_UP(pages, sizeof(__u64) * BITS_PER_BYTE) /
-                                         BITS_PER_BYTE;
+    range->bitmap.size = bitmap_size;
     range->bitmap.data = g_try_malloc0(range->bitmap.size);
     if (!range->bitmap.data) {
         ret = -ENOMEM;
@@ -1465,8 +1539,7 @@ static void vfio_listener_log_sync(MemoryListener *listener,
 {
     VFIOContainer *container = container_of(listener, VFIOContainer, listener);
 
-    if (vfio_listener_skipped_section(section) ||
-        !container->dirty_pages_supported) {
+    if (vfio_listener_skipped_section(section)) {
         return;
     }
 
