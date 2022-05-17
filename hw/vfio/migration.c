@@ -501,6 +501,7 @@ static int vfio_migration_init(VFIODevice *vbasedev)
     vbasedev->migration->data_fd = -1;
     migration = vbasedev->migration;
     migration->vbasedev = vbasedev;
+    migration->mig_flags = mig_flags;
 
     vbasedev->dirty_pages_supported = vfio_dma_logging_query(vbasedev);
 
