@@ -43,6 +43,7 @@
 #include "migration/misc.h"
 #include "migration/qemu-file.h"
 #include "sysemu/tpm.h"
+#include "qemu/iova-tree.h"
 
 VFIOGroupList vfio_group_list =
     QLIST_HEAD_INITIALIZER(vfio_group_list);
@@ -405,6 +406,7 @@ static int vfio_dma_unmap_bitmap(VFIOContainer *container,
     struct vfio_iommu_type1_dma_unmap *unmap;
     struct vfio_bitmap *bitmap;
     uint64_t pages = REAL_HOST_PAGE_ALIGN(size) / qemu_real_host_page_size();
+    DMAMap mapping;
     int ret;
 
     unmap = g_malloc0(sizeof(*unmap) + sizeof(*bitmap));
@@ -442,6 +444,12 @@ static int vfio_dma_unmap_bitmap(VFIOContainer *container,
     if (!ret) {
         cpu_physical_memory_set_dirty_lebitmap((unsigned long *)bitmap->data,
                 iotlb->translated_addr, pages);
+
+        mapping.iova = iova;
+        mapping.size = size - 1;
+        qemu_mutex_lock(&container->mappings_mutex);
+        iova_tree_remove(container->mappings, &mapping);
+        qemu_mutex_unlock(&container->mappings_mutex);
     } else {
         error_report("VFIO_UNMAP_DMA with DIRTY_BITMAP : %m");
     }
@@ -465,6 +473,7 @@ static int vfio_dma_unmap(VFIOContainer *container,
         .iova = iova,
         .size = size,
     };
+    DMAMap mapping;
 
     if (iotlb && container->dirty_pages_supported &&
         vfio_devices_all_running_and_mig_active(container)) {
@@ -494,6 +503,12 @@ static int vfio_dma_unmap(VFIOContainer *container,
         return -errno;
     }
 
+    mapping.iova = iova;
+    mapping.size = size - 1;
+    qemu_mutex_lock(&container->mappings_mutex);
+    iova_tree_remove(container->mappings, &mapping);
+    qemu_mutex_unlock(&container->mappings_mutex);
+
     return 0;
 }
 
@@ -507,6 +522,24 @@ static int vfio_dma_map(VFIOContainer *container, hwaddr iova,
         .iova = iova,
         .size = size,
     };
+    DMAMap mapping = {
+        .iova = iova,
+        .size = size - 1,
+        .perm = readonly ? IOMMU_RO : IOMMU_RW,
+    };
+    int ret;
+
+    qemu_mutex_lock(&container->mappings_mutex);
+    ret = iova_tree_insert(container->mappings, &mapping);
+    if (ret) {
+        error_report(
+            "vfio: Failed inserting range to mappings tree: %" HWADDR_PRIx
+            " size: " RAM_ADDR_FMT,
+            iova, size);
+        qemu_mutex_unlock(&container->mappings_mutex);
+        return ret;
+    }
+    qemu_mutex_unlock(&container->mappings_mutex);
 
     if (!readonly) {
         map.flags |= VFIO_DMA_MAP_FLAG_WRITE;
@@ -523,8 +556,14 @@ static int vfio_dma_map(VFIOContainer *container, hwaddr iova,
         return 0;
     }
 
+    ret = -errno;
     error_report("VFIO_MAP_DMA failed: %s", strerror(errno));
-    return -errno;
+
+    qemu_mutex_lock(&container->mappings_mutex);
+    iova_tree_remove(container->mappings, &mapping);
+    qemu_mutex_unlock(&container->mappings_mutex);
+
+    return ret;
 }
 
 static void vfio_host_win_add(VFIOContainer *container,
@@ -2128,16 +2167,24 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
     QLIST_INIT(&container->giommu_list);
     QLIST_INIT(&container->hostwin_list);
     QLIST_INIT(&container->vrdl_list);
+    container->mappings = iova_tree_new();
+    if (!container->mappings) {
+        error_setg(errp, "cannot allocate DMA mappings tree");
+        ret = -ENOMEM;
+        goto free_container_exit;
+    }
+
+    qemu_mutex_init(&container->mappings_mutex);
 
     ret = vfio_init_container(container, group->fd, errp);
     if (ret) {
-        goto free_container_exit;
+        goto destroy_mappings_exit;
     }
 
     ret = vfio_ram_block_discard_disable(container, true);
     if (ret) {
         error_setg_errno(errp, -ret, "Cannot set discarding of RAM broken");
-        goto free_container_exit;
+        goto destroy_mappings_exit;
     }
 
     switch (container->iommu_type) {
@@ -2271,6 +2318,9 @@ listener_release_exit:
 enable_discards_exit:
     vfio_ram_block_discard_disable(container, false);
 
+destroy_mappings_exit:
+    iova_tree_destroy(container->mappings);
+
 free_container_exit:
     g_free(container);
 
@@ -2325,6 +2375,7 @@ static void vfio_disconnect_container(VFIOGroup *group)
         }
 
         trace_vfio_disconnect_container(container->fd);
+        iova_tree_destroy(container->mappings);
         close(container->fd);
         g_free(container);
 
