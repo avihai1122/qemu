@@ -1330,12 +1330,133 @@ static void vfio_set_migration_error(int err)
     }
 }
 
+static bool vfio_devices_all_device_dirty_tracking(VFIOContainer *container)
+{
+    VFIOGroup *group;
+    VFIODevice *vbasedev;
+
+    QLIST_FOREACH(group, &container->group_list, container_next) {
+        QLIST_FOREACH(vbasedev, &group->device_list, next) {
+            if (!vbasedev->dirty_pages_supported) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+static gboolean vfio_device_dma_logging_range_add(DMAMap *map, gpointer data)
+{
+    struct vfio_device_feature_dma_logging_range **out = data;
+    struct vfio_device_feature_dma_logging_range *range = *out;
+
+    range->iova = map->iova;
+    range->length = map->size + 1;
+
+    *out = ++range;
+
+    return false;
+}
+
+static int vfio_device_dma_logging_start(VFIODevice *vbasedev,
+                                         VFIOContainer *container)
+{
+    uint64_t buf[DIV_ROUND_UP(sizeof(struct vfio_device_feature) +
+                        sizeof(struct vfio_device_feature_dma_logging_control) +
+                        sizeof(struct vfio_device_feature_dma_logging_range *),
+                        sizeof(uint64_t))] = {};
+    struct vfio_device_feature *feature = (void *)buf;
+    struct vfio_device_feature_dma_logging_control *control =
+        (void *)feature->data;
+    struct vfio_device_feature_dma_logging_range *ranges;
+
+    control->page_size = qemu_real_host_page_size();
+
+    qemu_mutex_lock(&container->mappings_mutex);
+    control->num_ranges = iova_tree_nnodes(container->mappings);
+    ranges = g_try_malloc0(control->num_ranges * sizeof(*ranges));
+    if (!ranges) {
+        qemu_mutex_unlock(&container->mappings_mutex);
+        return -ENOMEM;
+    }
+    control->ranges = (uint64_t)ranges;
+
+    iova_tree_foreach(container->mappings, vfio_device_dma_logging_range_add,
+                      &ranges);
+    qemu_mutex_unlock(&container->mappings_mutex);
+
+    feature->argsz = sizeof(buf);
+    feature->flags = VFIO_DEVICE_FEATURE_SET;
+    feature->flags |= VFIO_DEVICE_FEATURE_DMA_LOGGING_START;
+
+    if (ioctl(vbasedev->fd, VFIO_DEVICE_FEATURE, feature)) {
+        g_free((void *)control->ranges);
+        return -errno;
+    }
+
+    g_free((void *)control->ranges);
+
+    return 0;
+}
+
+static int vfio_device_dma_logging_stop(VFIODevice *vbasedev,
+                                        VFIOContainer *container)
+{
+    uint64_t buf[DIV_ROUND_UP(sizeof(struct vfio_device_feature),
+                              sizeof(uint64_t))] = {};
+    struct vfio_device_feature *feature = (void *)buf;
+
+    feature->argsz = sizeof(buf);
+    feature->flags = VFIO_DEVICE_FEATURE_SET;
+    feature->flags |= VFIO_DEVICE_FEATURE_DMA_LOGGING_STOP;
+
+    if (ioctl(vbasedev->fd, VFIO_DEVICE_FEATURE, feature)) {
+        return -errno;
+    }
+
+    return 0;
+}
+
+static int vfio_devices_set_dirty_page_tracking(VFIOContainer *container,
+                                                bool start)
+{
+    VFIOGroup *group;
+    VFIODevice *vbasedev;
+    int ret;
+
+    QLIST_FOREACH(group, &container->group_list, container_next) {
+        QLIST_FOREACH(vbasedev, &group->device_list, next) {
+            if (start) {
+                ret = vfio_device_dma_logging_start(vbasedev, container);
+            } else {
+                ret = vfio_device_dma_logging_stop(vbasedev, container);
+            }
+
+            if (ret) {
+                error_report("%s: Failed to switch DMA logging %s",
+                             vbasedev->name, start ? "start" : "stop");
+                return ret;
+            }
+        }
+    }
+
+    container->devices_dirty_tracking = start;
+
+    return 0;
+}
+
 static void vfio_listener_log_global_start(MemoryListener *listener)
 {
     VFIOContainer *container = container_of(listener, VFIOContainer, listener);
     int err;
 
-    err = vfio_set_dirty_page_tracking(container, true);
+    if (vfio_devices_all_device_dirty_tracking(container)) {
+        err = vfio_devices_set_dirty_page_tracking(container, true);
+    } else {
+        err = vfio_set_dirty_page_tracking(container, true);
+    }
+
     if (err) {
         vfio_set_migration_error(err);
     }
@@ -1346,10 +1467,82 @@ static void vfio_listener_log_global_stop(MemoryListener *listener)
     VFIOContainer *container = container_of(listener, VFIOContainer, listener);
     int err;
 
-    err = vfio_set_dirty_page_tracking(container, false);
+    if (vfio_devices_all_device_dirty_tracking(container)) {
+        err = vfio_devices_set_dirty_page_tracking(container, false);
+    } else {
+        err = vfio_set_dirty_page_tracking(container, false);
+    }
+
     if (err) {
         vfio_set_migration_error(err);
     }
+}
+
+static int vfio_device_dma_logging_report(VFIODevice *vbasedev, hwaddr iova,
+                                          hwaddr size, void *data)
+{
+    uint64_t buf[DIV_ROUND_UP(sizeof(struct vfio_device_feature) +
+                        sizeof(struct vfio_device_feature_dma_logging_report),
+                        sizeof(uint64_t))] = {};
+    struct vfio_device_feature *feature = (void *)buf;
+    struct vfio_device_feature_dma_logging_report *report = (void *)feature->data;
+
+    report->iova = iova;
+    report->length = size;
+    report->page_size = qemu_real_host_page_size();
+    report->bitmap = (uint64_t)data;
+
+    feature->argsz = sizeof(buf);
+    feature->flags = VFIO_DEVICE_FEATURE_GET | VFIO_DEVICE_FEATURE_DMA_LOGGING_REPORT;
+
+    if (ioctl(vbasedev->fd, VFIO_DEVICE_FEATURE, feature)) {
+        return -errno;
+    }
+
+    return 0;
+}
+
+static int vfio_devices_get_dirty_bitmap(VFIOContainer *container, hwaddr iova,
+                                         hwaddr size, ram_addr_t ram_addr)
+{
+    uint64_t pages, bitmap_size;
+    VFIODevice *vbasedev;
+    VFIOGroup *group;
+    void *bitmap;
+    int ret;
+
+    if (!container->devices_dirty_tracking)
+        return -EINVAL;
+
+    pages = REAL_HOST_PAGE_ALIGN(size) / qemu_real_host_page_size();
+    bitmap_size =
+        ROUND_UP(pages, sizeof(__u64) * BITS_PER_BYTE) / BITS_PER_BYTE;
+    bitmap = g_try_malloc0(bitmap_size);
+    if (!bitmap) {
+        return -ENOMEM;
+    }
+
+    QLIST_FOREACH(group, &container->group_list, container_next) {
+        QLIST_FOREACH(vbasedev, &group->device_list, next) {
+            ret = vfio_device_dma_logging_report(vbasedev, iova, size, bitmap);
+            if (ret) {
+                error_report("%s: Failed to get DMA logging report",
+                             vbasedev->name);
+                g_free(bitmap);
+                return ret;
+            }
+        }
+    }
+
+    cpu_physical_memory_set_dirty_lebitmap((unsigned long *)bitmap,
+                                            ram_addr, pages);
+
+    trace_vfio_get_dirty_bitmap(container->fd, iova, size, bitmap_size,
+                                ram_addr);
+
+    g_free(bitmap);
+
+    return 0;
 }
 
 static int vfio_get_dirty_bitmap(VFIOContainer *container, uint64_t iova,
@@ -1430,6 +1623,7 @@ static void vfio_iommu_map_dirty_notify(IOMMUNotifier *n, IOMMUTLBEntry *iotlb)
     if (vfio_get_xlat_addr(iotlb, NULL, &translated_addr, NULL)) {
         int ret;
 
+        /* TBD: device dirty tracking with vIOMMU */
         ret = vfio_get_dirty_bitmap(container, iova, iotlb->addr_mask + 1,
                                     translated_addr);
         if (ret) {
@@ -1456,6 +1650,11 @@ static int vfio_ram_discard_get_dirty_bitmap(MemoryRegionSection *section,
      * Sync the whole mapped region (spanning multiple individual mappings)
      * in one go.
      */
+    if (vfio_devices_all_device_dirty_tracking(vrdl->container)) {
+        return vfio_devices_get_dirty_bitmap(vrdl->container, iova, size,
+                                             ram_addr);
+    }
+
     return vfio_get_dirty_bitmap(vrdl->container, iova, size, ram_addr);
 }
 
@@ -1490,6 +1689,8 @@ static int vfio_sync_dirty_bitmap(VFIOContainer *container,
                                   MemoryRegionSection *section)
 {
     ram_addr_t ram_addr;
+    hwaddr iova;
+    hwaddr size;
 
     if (memory_region_is_iommu(section->mr)) {
         VFIOGuestIOMMU *giommu;
@@ -1523,10 +1724,14 @@ static int vfio_sync_dirty_bitmap(VFIOContainer *container,
 
     ram_addr = memory_region_get_ram_addr(section->mr) +
                section->offset_within_region;
+    iova = REAL_HOST_PAGE_ALIGN(section->offset_within_address_space);
+    size = int128_get64(section->size);
 
-    return vfio_get_dirty_bitmap(container,
-                   REAL_HOST_PAGE_ALIGN(section->offset_within_address_space),
-                   int128_get64(section->size), ram_addr);
+    if (vfio_devices_all_device_dirty_tracking(container)) {
+        return vfio_devices_get_dirty_bitmap(container, iova, size, ram_addr);
+    }
+
+    return vfio_get_dirty_bitmap(container, iova, size, ram_addr);
 }
 
 static void vfio_listener_log_sync(MemoryListener *listener,
