@@ -43,6 +43,7 @@
 #include "migration/misc.h"
 #include "migration/qemu-file.h"
 #include "sysemu/tpm.h"
+#include "qemu/iova-tree.h"
 
 VFIOGroupList vfio_group_list =
     QLIST_HEAD_INITIALIZER(vfio_group_list);
@@ -338,6 +339,11 @@ bool vfio_mig_active(void)
     return true;
 }
 
+static bool vfio_have_giommu(VFIOContainer *container)
+{
+    return !QLIST_EMPTY(&container->giommu_list);
+}
+
 static void vfio_set_migration_error(int err)
 {
     MigrationState *ms = migrate_get_current();
@@ -409,6 +415,44 @@ static bool vfio_devices_all_running_and_mig_active(VFIOContainer *container)
         }
     }
     return true;
+}
+
+static int vfio_record_mapping(VFIOContainer *container, hwaddr iova,
+                               hwaddr size, bool readonly)
+{
+    DMAMap map = {
+        .iova = iova,
+        .size = size - 1,
+        .perm = readonly ? IOMMU_RO : IOMMU_RW,
+    };
+    int ret;
+
+    if (vfio_have_giommu(container)) {
+        return 0;
+    }
+
+    qemu_mutex_lock(&container->mappings_mutex);
+    ret = iova_tree_insert(container->mappings, &map);
+    qemu_mutex_unlock(&container->mappings_mutex);
+
+    return ret;
+}
+
+static void vfio_erase_mapping(VFIOContainer *container, hwaddr iova,
+                                hwaddr size)
+{
+    DMAMap map = {
+        .iova = iova,
+        .size = size - 1,
+    };
+
+    if (vfio_have_giommu(container)) {
+        return;
+    }
+
+    qemu_mutex_lock(&container->mappings_mutex);
+    iova_tree_remove(container->mappings, map);
+    qemu_mutex_unlock(&container->mappings_mutex);
 }
 
 static int vfio_iova_mark_dirty(uint64_t iova, uint64_t size,
@@ -564,6 +608,8 @@ static int vfio_dma_unmap(VFIOContainer *container,
         return -errno;
     }
 
+    vfio_erase_mapping(container, iova, size);
+
     return 0;
 }
 
@@ -577,6 +623,14 @@ static int vfio_dma_map(VFIOContainer *container, hwaddr iova,
         .iova = iova,
         .size = size,
     };
+    int ret;
+
+    ret = vfio_record_mapping(container, iova, size, readonly);
+    if (ret) {
+        error_report("vfio: Failed recording mapping: 0x%" HWADDR_PRIx
+                     " size: " RAM_ADDR_FMT, iova, size);
+        return ret;
+    }
 
     if (!readonly) {
         map.flags |= VFIO_DMA_MAP_FLAG_WRITE;
@@ -593,8 +647,12 @@ static int vfio_dma_map(VFIOContainer *container, hwaddr iova,
         return 0;
     }
 
+    ret = -errno;
     error_report("VFIO_MAP_DMA failed: %s", strerror(errno));
-    return -errno;
+
+    vfio_erase_mapping(container, iova, size);
+
+    return ret;
 }
 
 static void vfio_host_win_add(VFIOContainer *container,
@@ -2202,16 +2260,23 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
     QLIST_INIT(&container->giommu_list);
     QLIST_INIT(&container->hostwin_list);
     QLIST_INIT(&container->vrdl_list);
+    container->mappings = iova_tree_new();
+    if (!container->mappings) {
+        error_setg(errp, "cannot allocate DMA mappings tree");
+        ret = -ENOMEM;
+        goto free_container_exit;
+    }
+    qemu_mutex_init(&container->mappings_mutex);
 
     ret = vfio_init_container(container, group->fd, errp);
     if (ret) {
-        goto free_container_exit;
+        goto destroy_mappings_exit;
     }
 
     ret = vfio_ram_block_discard_disable(container, true);
     if (ret) {
         error_setg_errno(errp, -ret, "Cannot set discarding of RAM broken");
-        goto free_container_exit;
+        goto destroy_mappings_exit;
     }
 
     switch (container->iommu_type) {
@@ -2345,6 +2410,10 @@ listener_release_exit:
 enable_discards_exit:
     vfio_ram_block_discard_disable(container, false);
 
+destroy_mappings_exit:
+    qemu_mutex_destroy(&container->mappings_mutex);
+    iova_tree_destroy(container->mappings);
+
 free_container_exit:
     g_free(container);
 
@@ -2399,6 +2468,8 @@ static void vfio_disconnect_container(VFIOGroup *group)
         }
 
         trace_vfio_disconnect_container(container->fd);
+        qemu_mutex_destroy(&container->mappings_mutex);
+        iova_tree_destroy(container->mappings);
         close(container->fd);
         g_free(container);
 
