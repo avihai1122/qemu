@@ -41,6 +41,7 @@
 #include "qapi/error.h"
 #include "migration/migration.h"
 #include "migration/misc.h"
+#include "migration/qemu-file.h"
 #include "sysemu/tpm.h"
 
 VFIOGroupList vfio_group_list =
@@ -335,6 +336,19 @@ bool vfio_mig_active(void)
         }
     }
     return true;
+}
+
+static void vfio_set_migration_error(int err)
+{
+    MigrationState *ms = migrate_get_current();
+
+    if (migration_is_setup_or_active(ms->state)) {
+        qemu_mutex_lock(&ms->qemu_file_lock);
+        if (ms->to_dst_file) {
+            qemu_file_set_error(ms->to_dst_file, err);
+        }
+        qemu_mutex_unlock(&ms->qemu_file_lock);
+    }
 }
 
 static bool vfio_devices_all_dirty_tracking(VFIOContainer *container)
@@ -770,6 +784,7 @@ static void vfio_iommu_map_notify(IOMMUNotifier *n, IOMMUTLBEntry *iotlb)
                          "0x%"HWADDR_PRIx") = %d (%m)",
                          container, iova,
                          iotlb->addr_mask + 1, ret);
+            vfio_set_migration_error(ret);
         }
     }
 out:
@@ -1312,7 +1327,7 @@ static void vfio_listener_region_del(MemoryListener *listener,
     }
 }
 
-static void vfio_set_dirty_page_tracking(VFIOContainer *container, bool start)
+static int vfio_set_dirty_page_tracking(VFIOContainer *container, bool start)
 {
     int ret;
     struct vfio_iommu_type1_dirty_bitmap dirty = {
@@ -1330,23 +1345,33 @@ static void vfio_set_dirty_page_tracking(VFIOContainer *container, bool start)
         error_report("Failed to set dirty tracking flag 0x%x errno: %d",
                      dirty.flags, errno);
     }
+
+    return ret;
 }
 
 static void vfio_listener_log_global_start(MemoryListener *listener)
 {
     VFIOContainer *container = container_of(listener, VFIOContainer, listener);
+    int err;
 
     if (container->dirty_pages_supported) {
-        vfio_set_dirty_page_tracking(container, true);
+        err = vfio_set_dirty_page_tracking(container, true);
+        if (err) {
+            vfio_set_migration_error(err);
+        }
     }
 }
 
 static void vfio_listener_log_global_stop(MemoryListener *listener)
 {
     VFIOContainer *container = container_of(listener, VFIOContainer, listener);
+    int err;
 
     if (container->dirty_pages_supported) {
-        vfio_set_dirty_page_tracking(container, false);
+        err = vfio_set_dirty_page_tracking(container, false);
+        if (err) {
+            vfio_set_migration_error(err);
+        }
     }
 }
 
@@ -1448,6 +1473,7 @@ static void vfio_iommu_map_dirty_notify(IOMMUNotifier *n, IOMMUTLBEntry *iotlb)
                          "0x%"HWADDR_PRIx") = %d (%m)",
                          container, iova,
                          iotlb->addr_mask + 1, ret);
+            vfio_set_migration_error(ret);
         }
     }
     rcu_read_unlock();
@@ -1543,13 +1569,18 @@ static void vfio_listener_log_sync(MemoryListener *listener,
         MemoryRegionSection *section)
 {
     VFIOContainer *container = container_of(listener, VFIOContainer, listener);
+    int err;
 
     if (vfio_listener_skipped_section(section)) {
         return;
     }
 
     if (vfio_devices_all_dirty_tracking(container)) {
-        vfio_sync_dirty_bitmap(container, section);
+        err = vfio_sync_dirty_bitmap(container, section);
+        if (err) {
+            error_report("vfio: Failed to sync dirty bitmap, err: %d", err);
+            vfio_set_migration_error(err);
+        }
     }
 }
 
