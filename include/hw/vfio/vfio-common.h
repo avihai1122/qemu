@@ -92,6 +92,7 @@ typedef struct VFIOContainer {
     unsigned int dma_max_mappings;
     IOVATree *mappings;
     QemuMutex mappings_mutex;
+    hwaddr giommu_tracked_range;
     QLIST_HEAD(, VFIOGuestIOMMU) giommu_list;
     QLIST_HEAD(, VFIOHostDMAWindow) hostwin_list;
     QLIST_HEAD(, VFIOGroup) group_list;

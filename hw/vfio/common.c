@@ -44,6 +44,8 @@
 #include "migration/qemu-file.h"
 #include "sysemu/tpm.h"
 #include "qemu/iova-tree.h"
+#include "hw/boards.h"
+#include "hw/mem/memory-device.h"
 
 VFIOGroupList vfio_group_list =
     QLIST_HEAD_INITIALIZER(vfio_group_list);
@@ -340,6 +342,39 @@ bool vfio_mig_active(void)
         }
     }
     return true;
+}
+
+static uint64_t vfio_get_ram_size(void)
+{
+    MachineState *ms = MACHINE(qdev_get_machine());
+    uint64_t plugged_size;
+
+    plugged_size = get_plugged_memory_size();
+    if (plugged_size == (uint64_t)-1) {
+        plugged_size = 0;
+    }
+
+    return ms->ram_size + plugged_size;
+}
+
+static int vfio_giommu_get_addr_width(VFIOContainer *container,
+                                      uint8_t *addr_width)
+{
+    VFIOGuestIOMMU *giommu;
+    int ret;
+
+    giommu = QLIST_FIRST(&container->giommu_list);
+    if (!giommu) {
+        return -1;
+    }
+
+    ret = memory_region_iommu_get_attr(giommu->iommu_mr,
+                                       IOMMU_ATTR_ADDRESS_WIDTH, addr_width);
+    if (ret) {
+        return ret;
+    }
+
+    return 0;
 }
 
 static bool vfio_have_giommu(VFIOContainer *container)
@@ -1518,7 +1553,7 @@ static gboolean vfio_iova_tree_get_last(DMAMap *map, gpointer data)
 
 static int vfio_devices_dma_logging_control_fill(
     VFIOContainer *container,
-    struct vfio_device_feature_dma_logging_control *control)
+    struct vfio_device_feature_dma_logging_control *control, bool giommu)
 {
     struct vfio_device_feature_dma_logging_range *ranges;
     unsigned int max_ranges;
@@ -1526,6 +1561,20 @@ static int vfio_devices_dma_logging_control_fill(
     DMAMap first, last;
 
     control->page_size = qemu_real_host_page_size();
+
+    if (giommu) {
+        ranges = g_try_malloc0(sizeof(*ranges));
+        if (!ranges) {
+            return -ENOMEM;
+        }
+
+        ranges->iova = 0;
+        ranges->length = container->giommu_tracked_range;
+        control->num_ranges = 1;
+        control->ranges = (uint64_t)ranges;
+
+        return 0;
+    }
 
     qemu_mutex_lock(&container->mappings_mutex);
     /*
@@ -1558,7 +1607,7 @@ static int vfio_devices_dma_logging_control_fill(
     return 0;
 }
 
-static int vfio_devices_dma_logging_start(VFIOContainer *container)
+static int vfio_devices_dma_logging_start(VFIOContainer *container, bool giommu)
 {
     uint64_t buf[DIV_ROUND_UP(sizeof(struct vfio_device_feature) +
                         sizeof(struct vfio_device_feature_dma_logging_control) +
@@ -1571,7 +1620,7 @@ static int vfio_devices_dma_logging_start(VFIOContainer *container)
     VFIOGroup *group;
     int ret;
 
-    ret = vfio_devices_dma_logging_control_fill(container, control);
+    ret = vfio_devices_dma_logging_control_fill(container, control, giommu);
     if (ret) {
         return ret;
     }
@@ -1602,13 +1651,55 @@ out:
     return ret;
 }
 
+static int vfio_devices_start_dirty_page_tracking(VFIOContainer *container)
+{
+    uint64_t iova_size, iova_retry_size, ram_size;
+    uint64_t iova_to_track[3] = {};
+    uint8_t addr_width;
+    int ret;
+    int i;
+
+    if (!vfio_have_giommu(container)) {
+        return vfio_devices_dma_logging_start(container, false);
+    }
+
+    /*
+     * With vIOMMU we try to track the entire IOVA space. As the IOVA space can
+     * be rather big, devices might fail tracking it, so in such case:
+     * 1. Try tracking a smaller part of the IOVA space.
+     * 2. Try tracking the physical memory size.
+     * 3. If all fail, give up.
+     */
+    ret = vfio_giommu_get_addr_width(container, &addr_width);
+    iova_size = ret ? 0 : 1ULL << addr_width;
+    /* 2^39 is the minimum value of Intel IOMMU address width, give it a try. */
+    iova_retry_size = iova_size ? MIN(1ULL << 39, iova_size / 2) : 1ULL << 39;
+    ram_size = vfio_get_ram_size();
+
+    iova_to_track[0] = iova_size;
+    iova_to_track[1] = iova_retry_size;
+    iova_to_track[2] = MIN(ram_size, iova_retry_size / 2);
+
+    for (i = 0; i < 3; i++) {
+        if (iova_to_track[i]) {
+            container->giommu_tracked_range = iova_to_track[i];
+            ret = vfio_devices_dma_logging_start(container, true);
+            if (!ret) {
+                break;
+            }
+        }
+    }
+
+    return ret;
+}
+
 static void vfio_listener_log_global_start(MemoryListener *listener)
 {
     VFIOContainer *container = container_of(listener, VFIOContainer, listener);
     int err = 0;
 
     if (vfio_devices_all_device_dirty_tracking(container)) {
-        err = vfio_devices_dma_logging_start(container);
+        err = vfio_devices_start_dirty_page_tracking(container);
     } else if (container->dirty_pages_supported) {
         err = vfio_set_dirty_page_tracking(container, true);
     }
@@ -1670,8 +1761,9 @@ static int vfio_devices_get_dirty_bitmap(VFIOContainer *container, hwaddr iova,
     int ret;
 
     if (vfio_have_giommu(container)) {
-        /* Device dirty page tracking currently doesn't support vIOMMU. */
-        return vfio_iova_mark_dirty(iova, size, ram_addr);
+        if (iova + size > container->giommu_tracked_range) {
+            return vfio_iova_mark_dirty(iova, size, ram_addr);
+        }
     }
 
     pages = REAL_HOST_PAGE_ALIGN(size) / qemu_real_host_page_size();
