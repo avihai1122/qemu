@@ -225,14 +225,27 @@ static void vfio_save_pending(void *opaque, uint64_t threshold_size,
                               uint64_t *res_precopy, uint64_t *res_postcopy)
 {
     VFIODevice *vbasedev = opaque;
+    uint64_t buf[DIV_ROUND_UP(sizeof(struct vfio_device_feature) +
+                              sizeof(struct vfio_device_feature_mig_data_size),
+                              sizeof(uint64_t))] = {};
+    struct vfio_device_feature *feature = (void *)buf;
+    struct vfio_device_feature_mig_data_size *mig_data_size =
+        (void *)feature->data;
 
-    /*
-     * VFIO migration protocol v2 currently doesn't have an API to get pending
-     * device state size. Until such API is introduced, report some big
-     * arbitrary pending size so the device will be taken into account for
-     * downtime limit calculations.
-     */
-    *res_postcopy += VFIO_MIG_PENDING_SIZE;
+    feature->argsz = sizeof(buf);
+    feature->flags =
+        VFIO_DEVICE_FEATURE_GET | VFIO_DEVICE_FEATURE_MIG_DATA_SIZE;
+
+    if (ioctl(vbasedev->fd, VFIO_DEVICE_FEATURE, feature)) {
+        if (errno != ENOTTY) {
+            return;
+        }
+
+        /* Kernel doesn't support VFIO_DEVICE_FEATURE_MIG_DATA_SIZE */
+        *res_postcopy += VFIO_MIG_PENDING_SIZE;
+    } else {
+        *res_postcopy += mig_data_size->stop_copy_length;
+    }
 
     trace_vfio_save_pending(vbasedev->name, *res_precopy, *res_postcopy);
 }
