@@ -712,10 +712,7 @@ static int vfio_migration_query_flags(VFIODevice *vbasedev, uint64_t *mig_flags)
     feature->argsz = sizeof(buf);
     feature->flags = VFIO_DEVICE_FEATURE_GET | VFIO_DEVICE_FEATURE_MIGRATION;
     if (ioctl(vbasedev->fd, VFIO_DEVICE_FEATURE, feature)) {
-        if (errno == ENOTTY) {
-            error_report("%s: VFIO migration is not supported in kernel",
-                         vbasedev->name);
-        } else {
+        if (errno != ENOTTY) {
             error_report("%s: Failed to query VFIO migration support, err: %s",
                          vbasedev->name, strerror(errno));
         }
@@ -809,7 +806,14 @@ int vfio_migration_realize(VFIODevice *vbasedev, Error **errp)
 {
     int ret = -ENOTSUP;
 
-    if (!vbasedev->enable_migration) {
+    /*
+     * TODO:
+     * 1. Check that devices that don't support migration don't generate QEMU errors/logs.
+     * 2. Require device DT in AUTO is set. If on then migration was asked
+     *    explciitly, so allow using it even without device DT.
+     * 3. Do we want to verify that device DT is capable of tracking? E.g., trigger DT start and see if it fails.
+     */
+    if (vbasedev->enable_migration == ON_OFF_AUTO_OFF) {
         goto add_blocker;
     }
 
