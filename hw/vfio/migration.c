@@ -733,10 +733,7 @@ static int vfio_migration_query_flags(VFIODevice *vbasedev, uint64_t *mig_flags)
     feature->argsz = sizeof(buf);
     feature->flags = VFIO_DEVICE_FEATURE_GET | VFIO_DEVICE_FEATURE_MIGRATION;
     if (ioctl(vbasedev->fd, VFIO_DEVICE_FEATURE, feature)) {
-        if (errno == ENOTTY) {
-            error_report("%s: VFIO migration is not supported in kernel",
-                         vbasedev->name);
-        } else {
+        if (errno != ENOTTY) {
             error_report("%s: Failed to query VFIO migration support, err: %s",
                          vbasedev->name, strerror(errno));
         }
@@ -828,14 +825,19 @@ int64_t vfio_mig_bytes_transferred(void)
 
 int vfio_migration_realize(VFIODevice *vbasedev, Error **errp)
 {
-    int ret = -ENOTSUP;
+    int ret;
 
-    if (!vbasedev->enable_migration) {
+    if (vbasedev->enable_migration == ON_OFF_AUTO_OFF) {
         goto add_blocker;
     }
 
     ret = vfio_migration_init(vbasedev);
     if (ret) {
+        goto add_blocker;
+    }
+
+    if (vbasedev->enable_migration == ON_OFF_AUTO_AUTO &&
+        !vbasedev->dirty_pages_supported) {
         goto add_blocker;
     }
 
