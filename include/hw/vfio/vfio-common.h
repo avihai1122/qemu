@@ -69,6 +69,8 @@ typedef struct VFIOMigration {
     uint64_t precopy_init_size;
     uint64_t precopy_dirty_size;
     uint64_t mig_flags;
+    bool precopy_init_sent_notified;
+    bool precopy_init_loaded;
 } VFIOMigration;
 
 typedef struct VFIOAddressSpace {

@@ -45,6 +45,7 @@
 #define VFIO_MIG_FLAG_DEV_CONFIG_STATE  (0xffffffffef100002ULL)
 #define VFIO_MIG_FLAG_DEV_SETUP_STATE   (0xffffffffef100003ULL)
 #define VFIO_MIG_FLAG_DEV_DATA_STATE    (0xffffffffef100004ULL)
+#define VFIO_MIG_FLAG_DEV_PRECOPY_INIT_SENT (0xffffffffef100005ULL)
 
 /*
  * This is an arbitrary size based on migration of mlx5 devices, where typically
@@ -348,6 +349,7 @@ static int vfio_save_setup(QEMUFile *f, void *opaque)
             }
 
             vfio_query_precopy_size(migration);
+			migration->precopy_init_sent_notified = false;
 
             break;
         case VFIO_DEVICE_STATE_STOP:
@@ -447,9 +449,16 @@ static int vfio_save_iterate(QEMUFile *f, void *opaque)
     if (data_size < 0) {
         return data_size;
     }
-    qemu_put_be64(f, VFIO_MIG_FLAG_END_OF_STATE);
 
     vfio_update_estimated_pending_data(migration, data_size);
+
+    if (!migration->precopy_init_size &&
+        !migration->precopy_init_sent_notified) {
+        qemu_put_be64(f, VFIO_MIG_FLAG_DEV_PRECOPY_INIT_SENT);
+        migration->precopy_init_sent_notified = true;
+    } else {
+        qemu_put_be64(f, VFIO_MIG_FLAG_END_OF_STATE);
+    }
 
     trace_vfio_save_iterate(vbasedev->name);
 
@@ -514,6 +523,8 @@ static int vfio_load_setup(QEMUFile *f, void *opaque)
 {
     VFIODevice *vbasedev = opaque;
 
+	vbasedev->migration->precopy_init_loaded = false;
+
     return vfio_migration_set_state(vbasedev, VFIO_DEVICE_STATE_RESUMING,
                                    vbasedev->migration->device_state);
 }
@@ -568,6 +579,12 @@ static int vfio_load_state(QEMUFile *f, void *opaque, int version_id)
             }
             break;
         }
+        case VFIO_MIG_FLAG_DEV_PRECOPY_INIT_SENT:
+        {
+            vbasedev->migration->precopy_init_loaded = true;
+
+            return 0;
+        }
         default:
             error_report("%s: Unknown tag 0x%"PRIx64, vbasedev->name, data);
             return -EINVAL;
@@ -582,6 +599,22 @@ static int vfio_load_state(QEMUFile *f, void *opaque, int version_id)
     return ret;
 }
 
+static bool vfio_precopy_init_supported(void *opaque)
+{
+    VFIODevice *vbasedev = opaque;
+    VFIOMigration *migration = vbasedev->migration;
+
+    return migration->mig_flags & VFIO_MIGRATION_PRE_COPY;
+}
+
+static bool vfio_precopy_init_loaded(void *opaque)
+{
+    VFIODevice *vbasedev = opaque;
+    VFIOMigration *migration = vbasedev->migration;
+
+    return migration->precopy_init_loaded;
+}
+
 static const SaveVMHandlers savevm_vfio_handlers = {
     .save_setup = vfio_save_setup,
     .save_cleanup = vfio_save_cleanup,
@@ -592,6 +625,8 @@ static const SaveVMHandlers savevm_vfio_handlers = {
     .save_live_complete_precopy = vfio_save_complete_precopy,
     .save_state = vfio_save_state,
     .load_setup = vfio_load_setup,
+    .precopy_init_supported = vfio_precopy_init_supported,
+	.precopy_init_loaded = vfio_precopy_init_loaded,
     .load_cleanup = vfio_load_cleanup,
     .load_state = vfio_load_state,
 };
