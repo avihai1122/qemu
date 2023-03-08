@@ -133,6 +133,11 @@ enum mig_rp_message_type {
     MIG_RP_MSG_RECV_BITMAP,  /* send recved_bitmap back to source */
     MIG_RP_MSG_RESUME_ACK,   /* tell source that we are ready to resume */
 
+    MIG_RP_MSG_PRECOPY_INIT_LOADED, /*
+                                     * Tell source that pre-copy initial data
+                                     * has been loaded.
+                                     */
+
     MIG_RP_MSG_MAX
 };
 
@@ -472,6 +477,13 @@ int migrate_send_rp_req_pages(MigrationIncomingState *mis,
     }
 
     return migrate_send_rp_message_req_pages(mis, rb, start);
+}
+
+int migrate_send_rp_precopy_init_loaded(MigrationIncomingState *mis)
+{
+    enum mig_rp_message_type msg_type = MIG_RP_MSG_PRECOPY_INIT_LOADED;
+
+    return migrate_send_rp_message(mis, msg_type, 0, NULL);
 }
 
 static bool migration_colo_enabled;
@@ -2272,6 +2284,7 @@ void migrate_init(MigrationState *s)
     s->vm_was_running = false;
     s->iteration_initial_bytes = 0;
     s->threshold_size = 0;
+    s->dst_precopy_init_loaded = false;
 }
 
 int migrate_add_blocker_internal(Error *reason, Error **errp)
@@ -2874,6 +2887,8 @@ static struct rp_cmd_args {
     [MIG_RP_MSG_REQ_PAGES_ID]   = { .len = -1, .name = "REQ_PAGES_ID" },
     [MIG_RP_MSG_RECV_BITMAP]    = { .len = -1, .name = "RECV_BITMAP" },
     [MIG_RP_MSG_RESUME_ACK]     = { .len =  4, .name = "RESUME_ACK" },
+    [MIG_RP_MSG_PRECOPY_INIT_LOADED] = { .len = 0,
+                                         .name = "PRECOPY_INIT_LOADED" },
     [MIG_RP_MSG_MAX]            = { .len = -1, .name = "MAX" },
 };
 
@@ -3110,6 +3125,10 @@ retry:
                 mark_source_rp_bad(ms);
                 goto out;
             }
+            break;
+
+        case MIG_RP_MSG_PRECOPY_INIT_LOADED:
+            migrate_get_current()->dst_precopy_init_loaded = true;
             break;
 
         default:
@@ -3870,6 +3889,15 @@ typedef enum {
     MIG_ITERATE_BREAK,          /* Break the loop */
 } MigIterateState;
 
+static bool migration_dst_precopy_init_loaded(MigrationState *s)
+{
+    if (!migrate_precopy_init()) {
+        return true;
+    }
+
+    return s->dst_precopy_init_loaded;
+}
+
 /*
  * Return true if continue to the next iteration directly, false
  * otherwise.
@@ -3890,7 +3918,8 @@ static MigIterateState migration_iteration_run(MigrationState *s)
         trace_migrate_pending_exact(pending_size, must_precopy, can_postcopy);
     }
 
-    if (!pending_size || pending_size < s->threshold_size) {
+    if ((!pending_size || pending_size < s->threshold_size) &&
+        migration_dst_precopy_init_loaded(s)) {
         trace_migration_thread_low_pending(pending_size);
         migration_completion(s);
         return MIG_ITERATE_BREAK;
@@ -4121,6 +4150,11 @@ static void *migration_thread(void *opaque)
     if (migrate_colo_enabled()) {
         /* Notify migration destination that we enable COLO */
         qemu_savevm_send_colo_enable(s->to_dst_file);
+    }
+
+    if (migrate_precopy_init()) {
+        /* Notify the destination that we enabled pre-copy init */
+        qemu_savevm_send_precopy_init_enable(s->to_dst_file);
     }
 
     qemu_savevm_state_setup(s->to_dst_file);

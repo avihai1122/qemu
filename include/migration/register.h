@@ -68,6 +68,10 @@ typedef struct SaveVMHandlers {
                                 uint64_t *can_postcopy);
     LoadStateHandler *load_state;
     int (*load_setup)(QEMUFile *f, void *opaque);
+    /* If it returns false, precopy_init_loaded() will be skipped */
+    bool (*precopy_init_supported)(void *opaque);
+    /* Checks if pre-copy initial data has been loaded */
+    bool (*precopy_init_loaded)(void *opaque);
     int (*load_cleanup)(void *opaque);
     /* Called when postcopy migration wants to resume from failure */
     int (*resume_prepare)(MigrationState *s, void *opaque);

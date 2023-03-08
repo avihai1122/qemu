@@ -89,6 +89,9 @@ enum qemu_vm_cmd {
     MIG_CMD_ENABLE_COLO,       /* Enable COLO */
     MIG_CMD_POSTCOPY_RESUME,   /* resume postcopy on dest */
     MIG_CMD_RECV_BITMAP,       /* Request for recved bitmap on dst */
+
+    MIG_CMD_PRECOPY_INIT_ENABLE, /* Tell the dest to use pre-copy init */
+
     MIG_CMD_MAX
 };
 
@@ -108,6 +111,7 @@ static struct mig_cmd_args {
     [MIG_CMD_POSTCOPY_RESUME]  = { .len =  0, .name = "POSTCOPY_RESUME" },
     [MIG_CMD_PACKAGED]         = { .len =  4, .name = "PACKAGED" },
     [MIG_CMD_RECV_BITMAP]      = { .len = -1, .name = "RECV_BITMAP" },
+    [MIG_CMD_PRECOPY_INIT_ENABLE] { .len = 0, .name = "PRECOPY_INIT_ENABLE" },
     [MIG_CMD_MAX]              = { .len = -1, .name = "MAX" },
 };
 
@@ -1030,6 +1034,12 @@ static void qemu_savevm_command_send(QEMUFile *f,
     qemu_put_be16(f, len);
     qemu_put_buffer(f, data, len);
     qemu_fflush(f);
+}
+
+void qemu_savevm_send_precopy_init_enable(QEMUFile *f)
+{
+    trace_savevm_send_precopy_init_enable();
+    qemu_savevm_command_send(f, MIG_CMD_PRECOPY_INIT_ENABLE, 0, NULL);
 }
 
 void qemu_savevm_send_colo_enable(QEMUFile *f)
@@ -2392,6 +2402,10 @@ static int loadvm_process_command(QEMUFile *f)
 
     case MIG_CMD_ENABLE_COLO:
         return loadvm_process_enable_colo(mis);
+
+    case MIG_CMD_PRECOPY_INIT_ENABLE:
+        mis->precopy_init_enabled = true;
+        break;
     }
 
     return 0;
@@ -2690,6 +2704,32 @@ static bool postcopy_pause_incoming(MigrationIncomingState *mis)
     return true;
 }
 
+static bool precopy_init_should_ack_loaded(MigrationIncomingState *mis)
+{
+    SaveStateEntry *se;
+
+    if (!mis->precopy_init_enabled || mis->precopy_init_loaded_acked) {
+        return false;
+    }
+
+    QTAILQ_FOREACH(se, &savevm_state.handlers, entry) {
+        if (!se->ops || !se->ops->precopy_init_loaded) {
+            continue;
+        }
+
+        if (!se->ops->precopy_init_supported ||
+            !se->ops->precopy_init_supported(se->opaque)) {
+            continue;
+        }
+
+        if (!se->ops->precopy_init_loaded(se->opaque)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 int qemu_loadvm_state_main(QEMUFile *f, MigrationIncomingState *mis)
 {
     uint8_t section_type;
@@ -2734,6 +2774,14 @@ retry:
             error_report("Unknown savevm section type %d", section_type);
             ret = -EINVAL;
             goto out;
+        }
+
+        if (precopy_init_should_ack_loaded(mis)) {
+            ret = migrate_send_rp_precopy_init_loaded(mis);
+            if (ret < 0) {
+                goto out;
+            }
+            mis->precopy_init_loaded_acked = true;
         }
     }
 

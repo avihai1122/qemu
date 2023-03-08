@@ -193,6 +193,9 @@ struct MigrationIncomingState {
      * contains valid information.
      */
     QemuMutex page_request_mutex;
+
+    bool precopy_init_enabled;
+    bool precopy_init_loaded_acked;
 };
 
 MigrationIncomingState *migration_incoming_get_current(void);
@@ -382,6 +385,8 @@ struct MigrationState {
 
     /* QEMU_VM_VMDESCRIPTION content filled for all non-iterable devices. */
     JSONWriter *vmdesc;
+
+    bool dst_precopy_init_loaded;
 };
 
 void migrate_set_state(int *state, int old_state, int new_state);
@@ -465,6 +470,8 @@ int migrate_send_rp_message_req_pages(MigrationIncomingState *mis,
 void migrate_send_rp_recv_bitmap(MigrationIncomingState *mis,
                                  char *block_name);
 void migrate_send_rp_resume_ack(MigrationIncomingState *mis, uint32_t value);
+
+int migrate_send_rp_precopy_init_loaded(MigrationIncomingState *mis);
 
 void dirty_bitmap_mig_before_vm_start(void);
 void dirty_bitmap_mig_cancel_outgoing(void);
