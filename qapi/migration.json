@@ -478,6 +478,14 @@
 #                    should not affect the correctness of postcopy migration.
 #                    (since 7.1)
 #
+# @precopy-init: If enabled, migration will not stop the source VM (i.e., move
+#                to stop-copy phase and complete migration) until an ACK has
+#                been received from the destination that initial pre-copy data
+#                has been loaded in the destination. This can improve downtime
+#                if there are migration clients that loading of their migration
+#                data in the destination can take time (e.g., due to resource
+#                allocation, etc.). (since 8.1)
+#
 # Features:
 # @unstable: Members @x-colo and @x-ignore-shared are experimental.
 #
@@ -492,7 +500,7 @@
            'dirty-bitmaps', 'postcopy-blocktime', 'late-block-activate',
            { 'name': 'x-ignore-shared', 'features': [ 'unstable' ] },
            'validate-uuid', 'background-snapshot',
-           'zero-copy-send', 'postcopy-preempt'] }
+           'zero-copy-send', 'postcopy-preempt', 'precopy-init'] }
 
 ##
 # @MigrationCapabilityStatus:

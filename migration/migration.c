@@ -1435,6 +1435,13 @@ static bool migrate_caps_check(bool *cap_list,
         }
     }
 
+    if (cap_list[MIGRATION_CAPABILITY_PRECOPY_INIT]) {
+        if (!cap_list[MIGRATION_CAPABILITY_RETURN_PATH]) {
+            error_setg(errp, "Precopy init requires return path");
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -2838,6 +2845,12 @@ bool migrate_postcopy_preempt(void)
     s = migrate_get_current();
 
     return s->enabled_capabilities[MIGRATION_CAPABILITY_POSTCOPY_PREEMPT];
+}
+
+bool migrate_precopy_init(void)
+{
+    /* Disable this capability until it's implemented */
+    return false;
 }
 
 /* migration thread support */
@@ -4529,6 +4542,7 @@ static Property migration_properties[] = {
     DEFINE_PROP_MIG_CAP("x-multifd", MIGRATION_CAPABILITY_MULTIFD),
     DEFINE_PROP_MIG_CAP("x-background-snapshot",
             MIGRATION_CAPABILITY_BACKGROUND_SNAPSHOT),
+    DEFINE_PROP_MIG_CAP("x-precopy-init", MIGRATION_CAPABILITY_PRECOPY_INIT),
 #ifdef CONFIG_LINUX
     DEFINE_PROP_MIG_CAP("x-zero-copy-send",
             MIGRATION_CAPABILITY_ZERO_COPY_SEND),
