@@ -2862,8 +2862,11 @@ bool migrate_postcopy_preempt(void)
 
 bool migrate_precopy_init(void)
 {
-    /* Disable this capability until it's implemented */
-    return false;
+    MigrationState *s;
+
+    s = migrate_get_current();
+
+    return s->enabled_capabilities[MIGRATION_CAPABILITY_PRECOPY_INIT];
 }
 
 /* migration thread support */
