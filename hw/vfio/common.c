@@ -402,7 +402,7 @@ int vfio_block_multiple_devices_migration(Error **errp)
     return ret;
 }
 
-void vfio_unblock_multiple_devices_migration(void)
+static void vfio_unblock_multiple_devices_migration(void)
 {
     if (!multiple_devices_migration_blocker ||
         vfio_migratable_device_num() > 1) {
@@ -462,6 +462,7 @@ static void vfio_unblock_giommu_migration(void)
 void vfio_migration_finalize(void)
 {
     vfio_unblock_giommu_migration();
+    vfio_unblock_multiple_devices_migration();
 }
 
 static void vfio_set_migration_error(int err)

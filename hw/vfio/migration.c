@@ -909,7 +909,6 @@ void vfio_migration_exit(VFIODevice *vbasedev)
         qemu_del_vm_change_state_handler(migration->vm_state);
         unregister_savevm(VMSTATE_IF(vbasedev->dev), "vfio", vbasedev);
         vfio_migration_free(vbasedev);
-        vfio_unblock_multiple_devices_migration();
     }
 
     if (vbasedev->migration_blocker) {
