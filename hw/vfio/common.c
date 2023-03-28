@@ -447,7 +447,7 @@ int vfio_block_giommu_migration(Error **errp)
     return ret;
 }
 
-void vfio_migration_finalize(void)
+static void vfio_unblock_giommu_migration(void)
 {
     if (!giommu_migration_blocker ||
         vfio_viommu_preset()) {
@@ -457,6 +457,11 @@ void vfio_migration_finalize(void)
     migrate_del_blocker(giommu_migration_blocker);
     error_free(giommu_migration_blocker);
     giommu_migration_blocker = NULL;
+}
+
+void vfio_migration_finalize(void)
+{
+    vfio_unblock_giommu_migration();
 }
 
 static void vfio_set_migration_error(int err)
