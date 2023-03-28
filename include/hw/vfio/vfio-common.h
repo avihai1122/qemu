@@ -226,7 +226,6 @@ extern VFIOGroupList vfio_group_list;
 
 bool vfio_mig_active(void);
 int vfio_block_multiple_devices_migration(Error **errp);
-void vfio_unblock_multiple_devices_migration(void);
 int vfio_block_giommu_migration(Error **errp);
 int64_t vfio_mig_bytes_transferred(void);
 
