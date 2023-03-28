@@ -25,9 +25,9 @@ guarantee that and thus, can potentially reduce downtime even further.
 
 TODO: edit P2P documentation.
 
-Note that currently VFIO migration is supported only for a single device. This
-is due to VFIO migration's lack of P2P support. However, P2P support is planned
-to be added later on.
+Note that multiple VFIO devices migration is currently supported only if all of
+them support P2P migration. Single VFIO device migration is supported regardless
+of P2P migration support.
 
 A detailed description of the UAPI for VFIO device migration can be found in
 the comment for the ``vfio_device_mig_state`` structure in the header file

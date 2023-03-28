@@ -361,57 +361,64 @@ bool vfio_mig_active(void)
     return true;
 }
 
-static Error *multiple_devices_migration_blocker;
+static Error *non_p2p_migration_blocker;
 static Error *giommu_migration_blocker;
 
-static unsigned int vfio_migratable_device_num(void)
+/*
+ * Multiple devices migration is currently allowed only if all devices support P2P.
+ * Single device migration is allowed regardless of P2P support.
+ */
+static bool vfio_should_block_non_p2p_migration(void)
 {
     VFIOGroup *group;
     VFIODevice *vbasedev;
     unsigned int device_num = 0;
+    bool have_non_p2p_device = false;
 
     QLIST_FOREACH(group, &vfio_group_list, next) {
         QLIST_FOREACH(vbasedev, &group->device_list, next) {
             if (vbasedev->migration) {
                 device_num++;
+
+                if (!(vbasedev->migration->mig_flags & VFIO_MIGRATION_P2P)) {
+                    have_non_p2p_device = true;
+                }
             }
         }
     }
 
-    return device_num;
+    return have_non_p2p_device && device_num > 1;
 }
 
-int vfio_block_multiple_devices_migration(Error **errp)
+int vfio_block_non_p2p_migration(Error **errp)
 {
     int ret;
 
-    if (multiple_devices_migration_blocker ||
-        vfio_migratable_device_num() <= 1) {
+    if (non_p2p_migration_blocker || !vfio_should_block_non_p2p_migration()) {
         return 0;
     }
 
-    error_setg(&multiple_devices_migration_blocker,
-               "Migration is currently not supported with multiple "
-               "VFIO devices");
-    ret = migrate_add_blocker(multiple_devices_migration_blocker, errp);
+    error_setg(&non_p2p_migration_blocker,
+               "Multiple VFIO devices migration is currently supported only if "
+               "all of them support P2P");
+    ret = migrate_add_blocker(non_p2p_migration_blocker, errp);
     if (ret < 0) {
-        error_free(multiple_devices_migration_blocker);
-        multiple_devices_migration_blocker = NULL;
+        error_free(non_p2p_migration_blocker);
+        non_p2p_migration_blocker = NULL;
     }
 
     return ret;
 }
 
-static void vfio_unblock_multiple_devices_migration(void)
+static void vfio_unblock_non_p2p_migration(void)
 {
-    if (!multiple_devices_migration_blocker ||
-        vfio_migratable_device_num() > 1) {
+    if (!non_p2p_migration_blocker || vfio_should_block_non_p2p_migration()) {
         return;
     }
 
-    migrate_del_blocker(multiple_devices_migration_blocker);
-    error_free(multiple_devices_migration_blocker);
-    multiple_devices_migration_blocker = NULL;
+    migrate_del_blocker(non_p2p_migration_blocker);
+    error_free(non_p2p_migration_blocker);
+    non_p2p_migration_blocker = NULL;
 }
 
 static bool vfio_viommu_preset(void)
@@ -462,7 +469,7 @@ static void vfio_unblock_giommu_migration(void)
 void vfio_migration_finalize(void)
 {
     vfio_unblock_giommu_migration();
-    vfio_unblock_multiple_devices_migration();
+    vfio_unblock_non_p2p_migration();
 }
 
 static void vfio_set_migration_error(int err)

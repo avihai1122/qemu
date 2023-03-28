@@ -875,7 +875,7 @@ int vfio_migration_realize(VFIODevice *vbasedev, Error **errp)
         goto add_blocker;
     }
 
-    ret = vfio_block_multiple_devices_migration(errp);
+    ret = vfio_block_non_p2p_migration(errp);
     if (ret) {
         return ret;
     }
