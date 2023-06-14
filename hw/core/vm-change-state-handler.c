@@ -36,27 +36,36 @@ static int qdev_get_dev_tree_depth(DeviceState *dev)
     return depth;
 }
 
+VMChangeStateEntry *qdev_add_vm_change_state_handler(DeviceState *dev,
+                                                     VMChangeStateHandler *cb,
+                                                     void *opaque)
+{
+    return qdev_add_vm_change_state_handler_full(dev, cb, NULL, opaque);
+}
+
 /**
- * qdev_add_vm_change_state_handler:
+ * qdev_add_vm_change_state_handler_full:
  * @dev: the device that owns this handler
  * @cb: the callback function to be invoked
+ * @pre_change_cb: a pre VM state change callback function to be invoked
  * @opaque: user data passed to the callback function
  *
- * This function works like qemu_add_vm_change_state_handler() except callbacks
- * are invoked in qdev tree depth order.  Ordering is desirable when callbacks
- * of children depend on their parent's callback having completed first.
+ * This function uses qemu_add_vm_change_state_handler_prio_full() to invoke
+ * callbacks in qdev tree depth order.  Ordering is desirable when callbacks of
+ * children depend on their parent's callback having completed first.
  *
- * For example, when qdev_add_vm_change_state_handler() is used, a host
+ * For example, when qdev_add_vm_change_state_handler_full() is used, a host
  * controller's callback is invoked before the children on its bus when the VM
  * starts running.  The order is reversed when the VM stops running.
  *
  * Returns: an entry to be freed with qemu_del_vm_change_state_handler()
  */
-VMChangeStateEntry *qdev_add_vm_change_state_handler(DeviceState *dev,
-                                                     VMChangeStateHandler *cb,
-                                                     void *opaque)
+VMChangeStateEntry *qdev_add_vm_change_state_handler_full(
+    DeviceState *dev, VMChangeStateHandler *cb,
+    VMChangeStateHandler *pre_change_cb, void *opaque)
 {
     int depth = qdev_get_dev_tree_depth(dev);
 
-    return qemu_add_vm_change_state_handler_prio(cb, opaque, depth);
+    return qemu_add_vm_change_state_handler_prio_full(cb, pre_change_cb, opaque,
+                                                      depth);
 }
