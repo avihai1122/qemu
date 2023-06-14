@@ -71,8 +71,13 @@ static const char *mig_state_to_str(enum vfio_device_mig_state state)
         return "STOP_COPY";
     case VFIO_DEVICE_STATE_RESUMING:
         return "RESUMING";
+    case VFIO_DEVICE_STATE_RUNNING_P2P:
+        return "RUNNING_P2P";
     case VFIO_DEVICE_STATE_PRE_COPY:
         return "PRE_COPY";
+    case VFIO_DEVICE_STATE_PRE_COPY_P2P:
+        return "PRE_COPY_P2P";
+
     default:
         return "UNKNOWN STATE";
     }
@@ -412,7 +417,8 @@ static void vfio_state_pending_estimate(void *opaque, uint64_t *must_precopy,
     VFIODevice *vbasedev = opaque;
     VFIOMigration *migration = vbasedev->migration;
 
-    if (migration->device_state != VFIO_DEVICE_STATE_PRE_COPY) {
+    if (migration->device_state != VFIO_DEVICE_STATE_PRE_COPY &&
+        migration->device_state != VFIO_DEVICE_STATE_PRE_COPY_P2P) {
         return;
     }
 
@@ -445,7 +451,8 @@ static void vfio_state_pending_exact(void *opaque, uint64_t *must_precopy,
     vfio_query_stop_copy_size(vbasedev, &stop_copy_size);
     *must_precopy += stop_copy_size;
 
-    if (migration->device_state == VFIO_DEVICE_STATE_PRE_COPY) {
+    if (migration->device_state == VFIO_DEVICE_STATE_PRE_COPY ||
+        migration->device_state == VFIO_DEVICE_STATE_PRE_COPY_P2P) {
         vfio_query_precopy_size(migration);
 
         *must_precopy +=
@@ -462,7 +469,8 @@ static bool vfio_is_active_iterate(void *opaque)
     VFIODevice *vbasedev = opaque;
     VFIOMigration *migration = vbasedev->migration;
 
-    return migration->device_state == VFIO_DEVICE_STATE_PRE_COPY;
+    return migration->device_state == VFIO_DEVICE_STATE_PRE_COPY ||
+           migration->device_state == VFIO_DEVICE_STATE_PRE_COPY_P2P;
 }
 
 static int vfio_save_iterate(QEMUFile *f, void *opaque)
@@ -654,21 +662,33 @@ static const SaveVMHandlers savevm_vfio_handlers = {
 
 /* ---------------------------------------------------------------------- */
 
-static void vfio_vmstate_change(void *opaque, bool running, RunState state)
+static void vfio_vmstate_change(VFIODevice *vbasedev, bool running,
+                                RunState state, bool pre_state_change)
 {
-    VFIODevice *vbasedev = opaque;
     VFIOMigration *migration = vbasedev->migration;
     enum vfio_device_mig_state new_state;
     int ret;
 
-    if (running) {
-        new_state = VFIO_DEVICE_STATE_RUNNING;
+    if (pre_state_change && !(migration->mig_flags & VFIO_MIGRATION_P2P)) {
+        return;
+    }
+
+    if (pre_state_change) {
+        new_state = migration->device_state == VFIO_DEVICE_STATE_PRE_COPY ?
+                        VFIO_DEVICE_STATE_PRE_COPY_P2P :
+                        VFIO_DEVICE_STATE_RUNNING_P2P;
     } else {
-        new_state =
-            (migration->device_state == VFIO_DEVICE_STATE_PRE_COPY &&
-             (state == RUN_STATE_FINISH_MIGRATE || state == RUN_STATE_PAUSED)) ?
-                VFIO_DEVICE_STATE_STOP_COPY :
-                VFIO_DEVICE_STATE_STOP;
+        if (running) {
+            new_state = VFIO_DEVICE_STATE_RUNNING;
+        } else {
+            new_state =
+                ((migration->device_state == VFIO_DEVICE_STATE_PRE_COPY ||
+                  migration->device_state == VFIO_DEVICE_STATE_PRE_COPY_P2P) &&
+                 (state == RUN_STATE_FINISH_MIGRATE ||
+                  state == RUN_STATE_PAUSED)) ?
+                    VFIO_DEVICE_STATE_STOP_COPY :
+                    VFIO_DEVICE_STATE_STOP;
+        }
     }
 
     /*
@@ -688,7 +708,21 @@ static void vfio_vmstate_change(void *opaque, bool running, RunState state)
     }
 
     trace_vfio_vmstate_change(vbasedev->name, running, RunState_str(state),
-                              mig_state_to_str(new_state));
+                              pre_state_change, mig_state_to_str(new_state));
+}
+
+static void vfio_vmstate_pre_change_handler(void *opaque, bool running, RunState state)
+{
+    VFIODevice *vbasedev = opaque;
+
+    vfio_vmstate_change(vbasedev, running, state, true);
+}
+
+static void vfio_vmstate_change_handler(void *opaque, bool running, RunState state)
+{
+    VFIODevice *vbasedev = opaque;
+
+    vfio_vmstate_change(vbasedev, running, state, false);
 }
 
 static void vfio_migration_state_notifier(Notifier *notifier, void *data)
@@ -807,9 +841,9 @@ static int vfio_migration_init(VFIODevice *vbasedev)
     register_savevm_live(id, VMSTATE_INSTANCE_ID_ANY, 1, &savevm_vfio_handlers,
                          vbasedev);
 
-    migration->vm_state = qdev_add_vm_change_state_handler(vbasedev->dev,
-                                                           vfio_vmstate_change,
-                                                           vbasedev);
+    migration->vm_state = qdev_add_vm_change_state_handler_full(
+        vbasedev->dev, vfio_vmstate_change_handler,
+        vfio_vmstate_pre_change_handler, vbasedev);
     migration->migration_state.notify = vfio_migration_state_notifier;
     add_migration_state_change_notifier(&migration->migration_state);
 
