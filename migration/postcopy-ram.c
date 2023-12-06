@@ -1642,15 +1642,13 @@ postcopy_preempt_send_channel_done(MigrationState *s,
     qemu_sem_post(&s->postcopy_qemufile_src_sem);
 }
 
-static void
-postcopy_preempt_tls_handshake(QIOTask *task, gpointer opaque)
+static void postcopy_preempt_tls_handshake(QIOChannel *ioc, gpointer opaque,
+                                           Error *err)
 {
-    g_autoptr(QIOChannel) ioc = QIO_CHANNEL(qio_task_get_source(task));
     MigrationState *s = opaque;
-    Error *local_err = NULL;
 
-    qio_task_propagate_error(task, &local_err);
-    postcopy_preempt_send_channel_done(s, ioc, local_err);
+    postcopy_preempt_send_channel_done(s, ioc, err);
+    object_unref(ioc);
 }
 
 static void
@@ -1658,7 +1656,6 @@ postcopy_preempt_send_channel_new(QIOTask *task, gpointer opaque)
 {
     g_autoptr(QIOChannel) ioc = QIO_CHANNEL(qio_task_get_source(task));
     MigrationState *s = opaque;
-    QIOChannelTLS *tioc;
     Error *local_err = NULL;
 
     if (qio_task_propagate_error(task, &local_err)) {
@@ -1666,14 +1663,11 @@ postcopy_preempt_send_channel_new(QIOTask *task, gpointer opaque)
     }
 
     if (migrate_channel_requires_tls_upgrade(ioc)) {
-        tioc = migration_tls_client_create(ioc, s->hostname, &local_err);
-        if (!tioc) {
+        if (!migration_tls_channel_connect(ioc, "preempt", s->hostname,
+                                           postcopy_preempt_tls_handshake, s,
+                                           false, &local_err)) {
             goto out;
         }
-        trace_postcopy_preempt_tls_handshake();
-        qio_channel_set_name(QIO_CHANNEL(tioc), "migration-tls-preempt");
-        qio_channel_tls_handshake(tioc, postcopy_preempt_tls_handshake,
-                                  s, NULL, NULL);
         /* Setup the channel until TLS handshake finished */
         return;
     }
