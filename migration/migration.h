@@ -451,6 +451,9 @@ struct MigrationState {
      */
     uint8_t clear_bitmap_shift;
 
+    /* Whether a header is sent in migration channels */
+    bool channel_header;
+
     /*
      * This save hostname when out-going migration starts
      */
