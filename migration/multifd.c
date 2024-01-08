@@ -828,19 +828,18 @@ static void multifd_new_send_channel_callback(QIOChannel *ioc, void *opaque,
     qemu_sem_post(&p->create_sem);
 }
 
-static void multifd_new_send_channel_create(MultiFDSendParams *p)
+static void multifd_new_send_channel_create(MultiFDSendParams *p,
+                                            MigChannelHeader *header)
 {
-    MigChannelHeader header = {};
     Error *local_err = NULL;
 
-    header.channel_type = MIG_CHANNEL_TYPE_MULTIFD;
     if (!migration_channel_connect(multifd_new_send_channel_callback, p->name,
-                                   p, true, &header, &local_err)) {
+                                   p, true, header, &local_err)) {
         multifd_new_send_channel_cleanup(p, NULL, local_err);
     }
 }
 
-int multifd_save_setup(Error **errp)
+int multifd_save_setup(MigChannelHeader *header, Error **errp)
 {
     int thread_count;
     uint32_t page_count = MULTIFD_PACKET_SIZE / qemu_target_page_size();
@@ -887,7 +886,7 @@ int multifd_save_setup(Error **errp)
             p->write_flags = 0;
         }
 
-        multifd_new_send_channel_create(p);
+        multifd_new_send_channel_create(p, header);
     }
 
     for (i = 0; i < thread_count; i++) {

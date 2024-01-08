@@ -2945,6 +2945,14 @@ static int ram_send_channels_create(ChannelCreateLocation location,
             postcopy_preempt_setup(s, &header);
         }
         break;
+    case CHANNEL_CREATE_LOCATION_POST_RESUME:
+        header.channel_type = MIG_CHANNEL_TYPE_MULTIFD;
+        ret = multifd_save_setup(&header, errp);
+        if (ret) {
+            multifd_send_channels_created();
+            return ret;
+        }
+        break;
     case CHANNEL_CREATE_LOCATION_POSTCOPY_START:
         if (migrate_postcopy_preempt()) {
             postcopy_preempt_wait_main_channel(s);
