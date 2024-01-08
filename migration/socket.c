@@ -22,6 +22,7 @@
 #include "channel.h"
 #include "socket.h"
 #include "migration.h"
+#include "savevm.h"
 #include "qemu-file.h"
 #include "io/channel-socket.h"
 #include "io/net-listener.h"
@@ -172,11 +173,7 @@ void socket_start_incoming_migration(SocketAddress *saddr,
 
     qio_net_listener_set_name(listener, "migration-socket-listener");
 
-    if (migrate_multifd()) {
-        num = migrate_multifd_channels();
-    } else if (migrate_postcopy_preempt()) {
-        num = RAM_CHANNEL_MAX;
-    }
+    num += qemu_savevm_num_channels_needed();
 
     if (qio_net_listener_open_sync(listener, saddr, num, errp) < 0) {
         object_unref(OBJECT(listener));

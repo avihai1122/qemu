@@ -123,11 +123,6 @@ static void migration_downtime_end(MigrationState *s)
     trace_vmstate_downtime_checkpoint("src-downtime-end");
 }
 
-static bool migration_needs_multiple_sockets(void)
-{
-    return migrate_multifd() || migrate_postcopy_preempt();
-}
-
 static bool transport_supports_multi_channels(MigrationAddress *addr)
 {
     if (addr->transport == MIGRATION_ADDRESS_TYPE_SOCKET) {
@@ -144,7 +139,7 @@ static bool transport_supports_multi_channels(MigrationAddress *addr)
 bool migration_channels_and_transport_compatible(MigrationAddress *addr,
                                                  Error **errp)
 {
-    if (migration_needs_multiple_sockets() &&
+    if (qemu_savevm_num_channels_needed() &&
         !transport_supports_multi_channels(addr)) {
         error_setg(errp, "Migration requires multi-channel URIs (e.g. tcp)");
         return false;
@@ -940,7 +935,7 @@ static void migration_ioc_process_incoming_no_header(QIOChannel *ioc,
         migration_incoming_setup(f);
     } else {
         /* Multiple connections */
-        assert(migration_needs_multiple_sockets());
+        assert(qemu_savevm_num_channels_needed());
         if (migrate_multifd()) {
             multifd_recv_new_channel(ioc, &local_err);
             if (local_err) {

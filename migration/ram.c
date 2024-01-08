@@ -2922,6 +2922,19 @@ static inline void postcopy_preempt_wait_main_channel(MigrationState *ms)
     qemu_sem_wait(&ms->rp_state.rp_pong_acks);
 }
 
+static unsigned int ram_num_channels_needed(void *opaque)
+{
+    unsigned int channel_num = 0;
+
+    if (migrate_multifd()) {
+        channel_num = migrate_multifd_channels();
+    } else if (migrate_postcopy_preempt()) {
+        channel_num = 1;
+    }
+
+    return channel_num;
+}
+
 static int ram_send_channels_create(ChannelCreateLocation location,
                                     const char *idstr, uint32_t instance_id,
                                     void *opaque, Error **errp)
@@ -4304,6 +4317,7 @@ void postcopy_preempt_shutdown_file(MigrationState *s)
 }
 
 static SaveVMHandlers savevm_ram_handlers = {
+    .num_channels_needed = ram_num_channels_needed,
     .send_channels_create = ram_send_channels_create,
     .save_setup = ram_save_setup,
     .save_live_iterate = ram_save_iterate,
