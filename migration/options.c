@@ -375,7 +375,6 @@ bool migrate_channel_header(void)
 {
     MigrationState *s = migrate_get_current();
 
-    return false;
     return s->channel_header;
 }
 
