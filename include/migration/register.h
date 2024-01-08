@@ -16,6 +16,13 @@
 
 #include "hw/vmstate-if.h"
 
+typedef enum {
+    CHANNEL_CREATE_LOCATION_PRE_RESUME,
+    CHANNEL_CREATE_LOCATION_POST_RESUME,
+    CHANNEL_CREATE_LOCATION_POSTCOPY_START,
+    CHANNEL_CREATE_LOCATION_DO_RESUME,
+} ChannelCreateLocation;
+
 typedef struct SaveVMHandlers {
     /* This runs inside the BQL.  */
     SaveStateHandler *save_state;
@@ -31,6 +38,9 @@ typedef struct SaveVMHandlers {
     int (*save_live_complete_precopy)(QEMUFile *f, void *opaque);
 
     /* This runs both outside and inside the BQL.  */
+    int (*send_channels_create)(ChannelCreateLocation location,
+                                const char *idstr, uint32_t instance_id,
+                                void *opaque, Error **errp);
     bool (*is_active)(void *opaque);
     bool (*has_postcopy)(void *opaque);
 

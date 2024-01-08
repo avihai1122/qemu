@@ -2506,6 +2506,13 @@ static int postcopy_start(MigrationState *ms, Error **errp)
     bool restart_block = false;
     int cur_state = MIGRATION_STATUS_ACTIVE;
 
+    ret = qemu_savevm_state_send_channels_create(
+        CHANNEL_CREATE_LOCATION_POSTCOPY_START, errp);
+    if (ret) {
+        migrate_set_state(&ms->state, ms->state, MIGRATION_STATUS_FAILED);
+        return ret;
+    }
+
     if (migrate_postcopy_preempt()) {
         migration_wait_main_channel(ms);
         if (postcopy_preempt_establish_channel(ms)) {
@@ -2909,6 +2916,7 @@ static int postcopy_resume_handshake(MigrationState *s)
 /* Return zero if success, or <0 for error */
 static int postcopy_do_resume(MigrationState *s)
 {
+    Error *local_err = NULL;
     int ret;
 
     /*
@@ -2919,6 +2927,13 @@ static int postcopy_do_resume(MigrationState *s)
     if (ret) {
         error_report("%s: resume_prepare() failure detected: %d",
                      __func__, ret);
+        return ret;
+    }
+
+    ret = qemu_savevm_state_send_channels_create(
+        CHANNEL_CREATE_LOCATION_DO_RESUME, &local_err);
+    if (ret) {
+        error_report_err(local_err);
         return ret;
     }
 
@@ -3649,6 +3664,7 @@ void migrate_fd_connect(MigrationState *s, Error *error_in)
     Error *local_err = NULL;
     uint64_t rate_limit;
     bool resume = s->state == MIGRATION_STATUS_POSTCOPY_PAUSED;
+    int ret;
 
     /*
      * If there's a previous error, free it and prepare for another one.
@@ -3705,6 +3721,16 @@ void migrate_fd_connect(MigrationState *s, Error *error_in)
         }
     }
 
+    ret = qemu_savevm_state_send_channels_create(
+        CHANNEL_CREATE_LOCATION_PRE_RESUME, &local_err);
+    if (ret) {
+        migrate_set_state(&s->state, s->state, MIGRATION_STATUS_FAILED);
+        migrate_set_error(s, local_err);
+        error_report_err(local_err);
+        migrate_fd_cleanup(s);
+        return;
+    }
+
     /*
      * This needs to be done before resuming a postcopy.  Note: for newer
      * QEMUs we will delay the channel creation until postcopy_start(), to
@@ -3719,6 +3745,16 @@ void migrate_fd_connect(MigrationState *s, Error *error_in)
         migrate_set_state(&s->state, MIGRATION_STATUS_POSTCOPY_PAUSED,
                           MIGRATION_STATUS_POSTCOPY_RECOVER);
         qemu_sem_post(&s->postcopy_pause_sem);
+        return;
+    }
+
+    ret = qemu_savevm_state_send_channels_create(
+        CHANNEL_CREATE_LOCATION_POST_RESUME, &local_err);
+    if (ret) {
+        migrate_set_state(&s->state, s->state, MIGRATION_STATUS_FAILED);
+        migrate_set_error(s, local_err);
+        error_report_err(local_err);
+        migrate_fd_cleanup(s);
         return;
     }
 

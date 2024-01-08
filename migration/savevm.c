@@ -1287,6 +1287,31 @@ bool qemu_savevm_state_guest_unplug_pending(void)
     return false;
 }
 
+int qemu_savevm_state_send_channels_create(ChannelCreateLocation location,
+                                           Error **errp)
+{
+    SaveStateEntry *se;
+    int ret;
+
+    QTAILQ_FOREACH(se, &savevm_state.handlers, entry) {
+        if (!se->ops || !se->ops->send_channels_create) {
+            continue;
+        }
+
+        if (se->ops->is_active && !se->ops->is_active(se->opaque)) {
+            continue;
+        }
+
+        ret = se->ops->send_channels_create(location, se->idstr,
+                                            se->instance_id, se->opaque, errp);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+
+    return 0;
+}
+
 int qemu_savevm_state_prepare(Error **errp)
 {
     SaveStateEntry *se;
