@@ -38,6 +38,7 @@ typedef struct SaveVMHandlers {
     int (*save_live_complete_precopy)(QEMUFile *f, void *opaque);
 
     /* This runs both outside and inside the BQL.  */
+    unsigned int (*num_channels_needed)(void *opaque);
     int (*send_channels_create)(ChannelCreateLocation location,
                                 const char *idstr, uint32_t instance_id,
                                 void *opaque, Error **errp);
