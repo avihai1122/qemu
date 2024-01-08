@@ -1623,7 +1623,8 @@ void postcopy_preempt_new_channel(MigrationIncomingState *mis, QEMUFile *file)
  * channel, and wait until the connection setup completed.  Returns 0 if
  * channel established, -1 for error.
  */
-int postcopy_preempt_establish_channel(MigrationState *s)
+int postcopy_preempt_establish_channel(MigrationState *s,
+                                       MigChannelHeader *header)
 {
     /* If preempt not enabled, no need to wait */
     if (!migrate_postcopy_preempt()) {
@@ -1636,7 +1637,7 @@ int postcopy_preempt_establish_channel(MigrationState *s)
      * setup phase of migration (even if racy in an unreliable network).
      */
     if (!s->preempt_pre_7_2) {
-        if (postcopy_preempt_setup(s)) {
+        if (postcopy_preempt_setup(s, header)) {
             return -1;
         }
     }
@@ -1676,14 +1677,12 @@ static void postcopy_preempt_send_channel_new_callback(QIOChannel *ioc,
     object_unref(OBJECT(ioc));
 }
 
-int postcopy_preempt_setup(MigrationState *s)
+int postcopy_preempt_setup(MigrationState *s, MigChannelHeader *header)
 {
-    MigChannelHeader header = {};
     Error *local_err = NULL;
 
-    header.channel_type = MIG_CHANNEL_TYPE_POSTCOPY_PREEMPT;
     if (!migration_channel_connect(postcopy_preempt_send_channel_new_callback,
-                                   "preempt", s, false, &header, &local_err)) {
+                                   "preempt", s, false, header, &local_err)) {
         migrate_set_error(s, local_err);
         error_report_err(local_err);
         return -1;

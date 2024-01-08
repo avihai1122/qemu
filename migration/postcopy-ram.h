@@ -13,6 +13,8 @@
 #ifndef QEMU_POSTCOPY_RAM_H
 #define QEMU_POSTCOPY_RAM_H
 
+#include "channel.h"
+
 /* Return true if the host supports everything we need to do postcopy-ram */
 bool postcopy_ram_supported_by_host(MigrationIncomingState *mis,
                                     Error **errp);
@@ -192,7 +194,8 @@ enum PostcopyChannels {
 };
 
 void postcopy_preempt_new_channel(MigrationIncomingState *mis, QEMUFile *file);
-int postcopy_preempt_setup(MigrationState *s);
-int postcopy_preempt_establish_channel(MigrationState *s);
+int postcopy_preempt_setup(MigrationState *s, MigChannelHeader *header);
+int postcopy_preempt_establish_channel(MigrationState *s,
+                                       MigChannelHeader *header);
 
 #endif

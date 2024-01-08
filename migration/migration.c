@@ -2486,13 +2486,6 @@ static bool close_return_path_on_source(MigrationState *ms)
     return migrate_has_error(ms);
 }
 
-static inline void
-migration_wait_main_channel(MigrationState *ms)
-{
-    /* Wait until one PONG message received */
-    qemu_sem_wait(&ms->rp_state.rp_pong_acks);
-}
-
 /*
  * Switch from normal iteration to postcopy
  * Returns non-0 on error
@@ -2511,14 +2504,6 @@ static int postcopy_start(MigrationState *ms, Error **errp)
     if (ret) {
         migrate_set_state(&ms->state, ms->state, MIGRATION_STATUS_FAILED);
         return ret;
-    }
-
-    if (migrate_postcopy_preempt()) {
-        migration_wait_main_channel(ms);
-        if (postcopy_preempt_establish_channel(ms)) {
-            migrate_set_state(&ms->state, ms->state, MIGRATION_STATUS_FAILED);
-            return -1;
-        }
     }
 
     if (!migrate_pause_before_switchover()) {
@@ -2934,20 +2919,6 @@ static int postcopy_do_resume(MigrationState *s)
         CHANNEL_CREATE_LOCATION_DO_RESUME, &local_err);
     if (ret) {
         error_report_err(local_err);
-        return ret;
-    }
-
-    /*
-     * If preempt is enabled, re-establish the preempt channel.  Note that
-     * we do it after resume prepare to make sure the main channel will be
-     * created before the preempt channel.  E.g. with weak network, the
-     * dest QEMU may get messed up with the preempt and main channels on
-     * the order of connection setup.  This guarantees the correct order.
-     */
-    ret = postcopy_preempt_establish_channel(s);
-    if (ret) {
-        error_report("%s: postcopy_preempt_establish_channel(): %d",
-                     __func__, ret);
         return ret;
     }
 
@@ -3729,15 +3700,6 @@ void migrate_fd_connect(MigrationState *s, Error *error_in)
         error_report_err(local_err);
         migrate_fd_cleanup(s);
         return;
-    }
-
-    /*
-     * This needs to be done before resuming a postcopy.  Note: for newer
-     * QEMUs we will delay the channel creation until postcopy_start(), to
-     * avoid disorder of channel creations.
-     */
-    if (migrate_postcopy_preempt() && s->preempt_pre_7_2) {
-        postcopy_preempt_setup(s);
     }
 
     if (resume) {

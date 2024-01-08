@@ -2916,6 +2916,75 @@ void qemu_guest_free_page_hint(void *addr, size_t len)
     }
 }
 
+static inline void postcopy_preempt_wait_main_channel(MigrationState *ms)
+{
+    /* Wait until one PONG message received */
+    qemu_sem_wait(&ms->rp_state.rp_pong_acks);
+}
+
+static int ram_send_channels_create(ChannelCreateLocation location,
+                                    const char *idstr, uint32_t instance_id,
+                                    void *opaque, Error **errp)
+{
+    MigChannelHeader header = {};
+    MigrationState *s = migrate_get_current();
+    int ret;
+
+    memcpy(&header.idstr, idstr, sizeof(header.idstr));
+    header.instance_id = instance_id;
+
+    switch (location) {
+    case CHANNEL_CREATE_LOCATION_PRE_RESUME:
+        /*
+         * This needs to be done before resuming a postcopy.  Note: for newer
+         * QEMUs we will delay the channel creation until postcopy_start(), to
+         * avoid disorder of channel creations.
+         */
+        if (migrate_postcopy_preempt() && s->preempt_pre_7_2) {
+            header.channel_type = MIG_CHANNEL_TYPE_POSTCOPY_PREEMPT;
+            postcopy_preempt_setup(s, &header);
+        }
+        break;
+    case CHANNEL_CREATE_LOCATION_POSTCOPY_START:
+        if (migrate_postcopy_preempt()) {
+            postcopy_preempt_wait_main_channel(s);
+            header.channel_type = MIG_CHANNEL_TYPE_POSTCOPY_PREEMPT;
+            ret = postcopy_preempt_establish_channel(s, &header);
+            if (ret) {
+                error_setg(errp,
+                           "%s: LOCATION_POSTCOPY_START: Failed to establish "
+                           "preempt channel: %d",
+                           __func__, ret);
+                return -1;
+            }
+        }
+        break;
+    case CHANNEL_CREATE_LOCATION_DO_RESUME:
+        /*
+         * If preempt is enabled, re-establish the preempt channel.  Note that
+         * we do it after resume prepare to make sure the main channel will be
+         * created before the preempt channel.  E.g. with weak network, the
+         * dest QEMU may get messed up with the preempt and main channels on
+         * the order of connection setup.  This guarantees the correct order.
+         */
+        header.channel_type = MIG_CHANNEL_TYPE_POSTCOPY_PREEMPT;
+        ret = postcopy_preempt_establish_channel(s, &header);
+        if (ret) {
+            error_setg(errp,
+                       "%s: LOCATION_DO_RESUME: Failed to establish preempt "
+                       "channel: %d",
+                       __func__, ret);
+            return ret;
+        }
+
+        break;
+    default:
+        break;
+    }
+
+    return 0;
+}
+
 /*
  * Each of ram_save_setup, ram_save_iterate and ram_save_complete has
  * long-running RCU critical section.  When rcu-reclaims in the code
@@ -4227,6 +4296,7 @@ void postcopy_preempt_shutdown_file(MigrationState *s)
 }
 
 static SaveVMHandlers savevm_ram_handlers = {
+    .send_channels_create = ram_send_channels_create,
     .save_setup = ram_save_setup,
     .save_live_iterate = ram_save_iterate,
     .save_live_complete_postcopy = ram_save_complete,
