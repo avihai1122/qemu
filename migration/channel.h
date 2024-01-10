@@ -31,6 +31,7 @@ int migration_channel_read_peek(QIOChannel *ioc,
 typedef enum {
     MIG_CHANNEL_TYPE_MAIN,
     MIG_CHANNEL_TYPE_POSTCOPY_PREEMPT,
+    MIG_CHANNEL_TYPE_MULTIFD,
 } MigChannelTypes;
 
 typedef struct {

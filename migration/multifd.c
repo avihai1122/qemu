@@ -830,10 +830,12 @@ static void multifd_new_send_channel_callback(QIOChannel *ioc, void *opaque,
 
 static void multifd_new_send_channel_create(MultiFDSendParams *p)
 {
+    MigChannelHeader header = {};
     Error *local_err = NULL;
 
+    header.channel_type = MIG_CHANNEL_TYPE_MULTIFD;
     if (!migration_channel_connect(multifd_new_send_channel_callback, p->name,
-                                   p, true, NULL, &local_err)) {
+                                   p, true, &header, &local_err)) {
         multifd_new_send_channel_cleanup(p, NULL, local_err);
     }
 }
