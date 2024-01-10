@@ -28,6 +28,23 @@ int migration_channel_read_peek(QIOChannel *ioc,
                                 const size_t buflen,
                                 Error **errp);
 
+typedef enum {
+    MIG_CHANNEL_TYPE_MAIN,
+} MigChannelTypes;
+
+typedef struct {
+    uint32_t channel_type;
+    char idstr[256];
+    uint32_t instance_id;
+    uint32_t flags;
+} MigChannelHeader;
+
+int migration_channel_header_send(QIOChannel *ioc, MigChannelHeader *header,
+                                  Error **errp);
+
+int migration_channel_header_recv(QIOChannel *ioc, MigChannelHeader *header,
+                                  Error **errp);
+
 typedef void (*MigChannelCallback)(QIOChannel *ioc, void *opaque, Error *err);
 
 /**

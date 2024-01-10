@@ -22,6 +22,7 @@
 #include "qemu/yank.h"
 #include "yank_functions.h"
 #include "socket.h"
+#include "options.h"
 
 /**
  * @migration_channel_process_incoming - Create new incoming migration channel
@@ -100,6 +101,76 @@ void migration_channel_connect_main(MigrationState *s, QIOChannel *ioc,
     }
     migrate_fd_connect(s, error);
     error_free(error);
+}
+
+int migration_channel_header_recv(QIOChannel *ioc, MigChannelHeader *header,
+                                  Error **errp)
+{
+    uint64_t header_size;
+    int ret;
+
+    ret = qio_channel_read_all_eof(ioc, (char *)&header_size,
+                                   sizeof(header_size), errp);
+    if (ret == 0 || ret == -1) {
+        return -1;
+    }
+
+    header_size = be64_to_cpu(header_size);
+    if (header_size > sizeof(*header)) {
+        error_setg(errp,
+                   "Received header of size %lu bytes which is greater than "
+                   "max header size of %lu bytes",
+                   header_size, sizeof(*header));
+        return -EINVAL;
+    }
+
+    ret = qio_channel_read_all_eof(ioc, (char *)header, header_size, errp);
+    if (ret == 0 || ret == -1) {
+        return -1;
+    }
+
+    header->channel_type = be32_to_cpu(header->channel_type);
+    header->instance_id = be32_to_cpu(header->instance_id);
+    header->flags = be32_to_cpu(header->flags);
+    if (header->flags) {
+        error_setg(errp, "Received invalid header flags value: %u",
+                   header->flags);
+        return -EINVAL;
+    }
+
+    trace_migration_channel_header_recv(header->channel_type, header->idstr,
+                                        header->instance_id, header->flags,
+                                        header_size);
+
+    return 0;
+}
+
+int migration_channel_header_send(QIOChannel *ioc, MigChannelHeader *header,
+                                  Error **errp)
+{
+    uint64_t header_size = sizeof(*header);
+    int ret;
+
+    if (!migrate_channel_header()) {
+        return 0;
+    }
+
+    trace_migration_channel_header_send(header->channel_type, header->idstr,
+                                        header->instance_id, header->flags,
+                                        header_size);
+
+    header_size = cpu_to_be64(header_size);
+    ret = qio_channel_write_all(ioc, (char *)&header_size, sizeof(header_size),
+                                errp);
+    if (ret) {
+        return ret;
+    }
+
+    header->channel_type = cpu_to_be32(header->channel_type);
+    header->instance_id = cpu_to_be32(header->instance_id);
+    header->flags = cpu_to_be32(header->flags);
+
+    return qio_channel_write_all(ioc, (char *)header, sizeof(*header), errp);
 }
 
 typedef struct {
