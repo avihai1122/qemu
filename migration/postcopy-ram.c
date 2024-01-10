@@ -1678,10 +1678,12 @@ static void postcopy_preempt_send_channel_new_callback(QIOChannel *ioc,
 
 int postcopy_preempt_setup(MigrationState *s)
 {
+    MigChannelHeader header = {};
     Error *local_err = NULL;
 
+    header.channel_type = MIG_CHANNEL_TYPE_POSTCOPY_PREEMPT;
     if (!migration_channel_connect(postcopy_preempt_send_channel_new_callback,
-                                   "preempt", s, false, NULL, &local_err)) {
+                                   "preempt", s, false, &header, &local_err)) {
         migrate_set_error(s, local_err);
         error_report_err(local_err);
         return -1;

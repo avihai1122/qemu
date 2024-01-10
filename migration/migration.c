@@ -980,6 +980,11 @@ void migration_ioc_process_incoming(QIOChannel *ioc, Error **errp)
         migration_incoming_setup(f);
         main_channel = true;
         break;
+    case MIG_CHANNEL_TYPE_POSTCOPY_PREEMPT:
+        assert(migrate_postcopy_preempt());
+        f = qemu_file_new_input(ioc);
+        postcopy_preempt_new_channel(migration_incoming_get_current(), f);
+        break;
     default:
         error_setg(errp, "Received unknown migration channel type %u",
                    header.channel_type);
