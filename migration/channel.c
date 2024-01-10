@@ -90,6 +90,13 @@ void migration_channel_connect_main(MigrationState *s, QIOChannel *ioc,
                 return;
             }
         } else {
+            /* TODO: Send header after register yank? Make a QEMUFile variant? */
+            MigChannelHeader header = {};
+            header.channel_type = MIG_CHANNEL_TYPE_MAIN;
+            if (migration_channel_header_send(ioc, &header, &error)) {
+                goto out;
+            }
+
             QEMUFile *f = qemu_file_new_output(ioc);
 
             migration_ioc_register_yank(ioc);
@@ -99,6 +106,8 @@ void migration_channel_connect_main(MigrationState *s, QIOChannel *ioc,
             qemu_mutex_unlock(&s->qemu_file_lock);
         }
     }
+
+out:
     migrate_fd_connect(s, error);
     error_free(error);
 }

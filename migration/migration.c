@@ -831,12 +831,39 @@ void migration_fd_process_incoming(QEMUFile *f)
     migration_incoming_process();
 }
 
+static bool migration_should_start_incoming_header(bool main_channel)
+{
+    MigrationIncomingState *mis = migration_incoming_get_current();
+
+    if (!mis->from_src_file) {
+        return false;
+    }
+
+    if (migrate_multifd()) {
+        return multifd_recv_all_channels_created();
+    }
+
+    if (migrate_postcopy_preempt() && migrate_get_current()->preempt_pre_7_2) {
+        return mis->postcopy_qemufile_dst != NULL;
+    }
+
+    if (migrate_postcopy_preempt()) {
+        return main_channel;
+    }
+
+    return true;
+}
+
 /*
  * Returns true when we want to start a new incoming migration process,
  * false otherwise.
  */
 static bool migration_should_start_incoming(bool main_channel)
 {
+    if (migrate_channel_header()) {
+        return migration_should_start_incoming_header(main_channel);
+    }
+
     /* Multifd doesn't start unless all channels are established */
     if (migrate_multifd()) {
         return migration_has_all_channels();
@@ -856,7 +883,22 @@ static bool migration_should_start_incoming(bool main_channel)
     return true;
 }
 
-void migration_ioc_process_incoming(QIOChannel *ioc, Error **errp)
+static void migration_start_incoming(bool main_channel)
+{
+    if (!migration_should_start_incoming(main_channel)) {
+        return;
+    }
+
+    /* If it's a recovery, we're done */
+    if (postcopy_try_recover()) {
+        return;
+    }
+
+    migration_incoming_process();
+}
+
+static void migration_ioc_process_incoming_no_header(QIOChannel *ioc,
+                                                     Error **errp)
 {
     MigrationIncomingState *mis = migration_incoming_get_current();
     Error *local_err = NULL;
@@ -912,13 +954,39 @@ void migration_ioc_process_incoming(QIOChannel *ioc, Error **errp)
         }
     }
 
-    if (migration_should_start_incoming(main_channel)) {
-        /* If it's a recovery, we're done */
-        if (postcopy_try_recover()) {
-            return;
-        }
-        migration_incoming_process();
+	migration_start_incoming(main_channel);
+}
+
+void migration_ioc_process_incoming(QIOChannel *ioc, Error **errp)
+{
+    MigChannelHeader header = {};
+    bool main_channel = false;
+    QEMUFile *f;
+    int ret;
+
+    if (!migrate_channel_header()) {
+        migration_ioc_process_incoming_no_header(ioc, errp);
+        return;
     }
+
+    ret = migration_channel_header_recv(ioc, &header, errp);
+    if (ret) {
+        return;
+    }
+
+    switch (header.channel_type) {
+    case MIG_CHANNEL_TYPE_MAIN:
+        f = qemu_file_new_input(ioc);
+        migration_incoming_setup(f);
+        main_channel = true;
+        break;
+    default:
+        error_setg(errp, "Received unknown migration channel type %u",
+                   header.channel_type);
+        return;
+    }
+
+    migration_start_incoming(main_channel);
 }
 
 /**
