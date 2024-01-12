@@ -67,5 +67,6 @@ typedef void (*MigChannelCallback)(QIOChannel *ioc, void *opaque, Error *err);
  * false on failure.
  */
 bool migration_channel_connect(MigChannelCallback callback, const char *name,
-                               void *opaque, bool tls_in_thread, Error **errp);
+                               void *opaque, bool tls_in_thread,
+                               MigChannelHeader *header, Error **errp);
 #endif

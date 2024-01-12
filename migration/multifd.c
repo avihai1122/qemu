@@ -833,7 +833,7 @@ static void multifd_new_send_channel_create(MultiFDSendParams *p)
     Error *local_err = NULL;
 
     if (!migration_channel_connect(multifd_new_send_channel_callback, p->name,
-                                   p, true, &local_err)) {
+                                   p, true, NULL, &local_err)) {
         multifd_new_send_channel_cleanup(p, NULL, local_err);
     }
 }

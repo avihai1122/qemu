@@ -187,12 +187,17 @@ typedef struct {
     void *opaque;
     char *name;
     bool tls_in_thread;
+    MigChannelHeader header;
 } MigChannelData;
 
 static void migration_channel_connect_tls_handshake(QIOChannel *ioc,
                                                     void *opaque, Error *err)
 {
     MigChannelData *data = opaque;
+
+    if (!err) {
+        migration_channel_header_send(ioc, &data->header, &err);
+    }
 
     data->callback(ioc, data->opaque, err);
     g_free(data->name);
@@ -226,13 +231,17 @@ static void migration_channel_connect_callback(QIOTask *task, void *opaque)
     }
 
 out:
+    if (!err) {
+        migration_channel_header_send(ioc, &data->header, &err);
+    }
     data->callback(ioc, data->opaque, err);
     g_free(data->name);
     g_free(data);
 }
 
 bool migration_channel_connect(MigChannelCallback callback, const char *name,
-                               void *opaque, bool tls_in_thread, Error **errp)
+                               void *opaque, bool tls_in_thread,
+                               MigChannelHeader *header, Error **errp)
 {
     MigrationState *s = migrate_get_current();
     MigChannelData *data;
@@ -245,6 +254,9 @@ bool migration_channel_connect(MigChannelCallback callback, const char *name,
     data->opaque = opaque;
     data->name = g_strdup(name);
     data->tls_in_thread = tls_in_thread;
+    if (header) {
+        memcpy(&data->header, header, sizeof(*header));
+    }
 
     trace_migration_channel_connect_start(s->hostname, name);
     /*
