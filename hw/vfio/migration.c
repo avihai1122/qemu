@@ -555,6 +555,26 @@ static void vfio_channel_create_callback(QIOChannel *ioc, void *opaque,
     qemu_sem_post(&schannel->create_sem);
 }
 
+static int vfio_load_state(QEMUFile *f, void *opaque, int version_id);
+
+static void *vfio_recv_thread(void *opaque)
+{
+    VFIODevice *vbasedev = opaque;
+    VFIOMigration *migration = vbasedev->migration;
+    VFIORecvChannel *rchannel = migration->channel.rchannel;
+    int ret;
+
+    while (!rchannel->quit) {
+        ret = vfio_load_state(rchannel->f, vbasedev, 0);
+        if (ret) {
+            error_report("%s: Failed to load state, err: %d.\n", __func__, ret);
+            break;
+        }
+    }
+
+    return NULL;
+}
+
 static void vfio_recv_channel_cleanup(VFIOMigration *migration)
 {
     VFIORecvChannel *rchannel = migration->channel.rchannel;
@@ -564,6 +584,7 @@ static void vfio_recv_channel_cleanup(VFIOMigration *migration)
         return;
     }
 
+    qemu_thread_join(&rchannel->thread);
     migration_ioc_unregister_yank_from_file(rchannel->f);
     ret = qemu_fclose(rchannel->f);
     if (ret) {
@@ -871,6 +892,8 @@ static int vfio_recv_channel_create(MigChannelTypes channel_type,
     rchannel->ioc = ioc;
     rchannel->f = qemu_file_new_input(ioc);
     migration->channel.rchannel = rchannel;
+    qemu_thread_create(&rchannel->thread, vbasedev->name, vfio_recv_thread,
+                       vbasedev, QEMU_THREAD_JOINABLE);
 
     return 0;
 }
@@ -959,6 +982,14 @@ static int vfio_load_state(QEMUFile *f, void *opaque, int version_id)
             }
 
             return ret;
+        }
+        case VFIO_MIG_FLAG_END_OF_CHANNEL:
+        {
+            VFIORecvChannel *rchannel = vbasedev->migration->channel.rchannel;
+
+            rchannel->quit = true;
+            error_report("AH: END OF CHANNEL received.");
+            return 0;
         }
         default:
             error_report("%s: Unknown tag 0x%"PRIx64, vbasedev->name, data);

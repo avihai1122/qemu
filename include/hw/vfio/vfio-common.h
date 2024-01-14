@@ -79,6 +79,8 @@ typedef struct {
 typedef struct {
     QIOChannel *ioc;
     QEMUFile *f;
+    QemuThread thread;
+    bool quit;
 } VFIORecvChannel;
 
 typedef struct VFIOMigration {
