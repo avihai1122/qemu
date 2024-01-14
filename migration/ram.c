@@ -3587,6 +3587,45 @@ void colo_release_ram_cache(void)
     ram_state_cleanup(&ram_state);
 }
 
+static int ram_recv_channels_create(MigChannelTypes channel_type,
+                                    QIOChannel *ioc, void *opaque, Error **errp)
+{
+    switch (channel_type) {
+    case MIG_CHANNEL_TYPE_POSTCOPY_PREEMPT:
+    {
+        QEMUFile *f;
+
+        assert(migrate_postcopy_preempt());
+        f = qemu_file_new_input(ioc);
+        postcopy_preempt_new_channel(migration_incoming_get_current(), f);
+        break;
+    }
+    case MIG_CHANNEL_TYPE_MULTIFD:
+    {
+        Error *local_err = NULL;
+        int ret;
+
+        assert(migrate_multifd());
+        ret = multifd_load_setup(errp);
+        if (ret) {
+            return ret;
+        }
+
+        multifd_recv_new_channel(ioc, &local_err);
+        if (local_err) {
+            error_propagate(errp, local_err);
+            return -1;
+        }
+        break;
+    }
+    default:
+        error_setg(errp, "Invalid migration channel type %u", channel_type);
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
 /**
  * ram_load_setup: Setup RAM for migration incoming side
  *
@@ -4328,6 +4367,7 @@ static SaveVMHandlers savevm_ram_handlers = {
     .state_pending_estimate = ram_state_pending_estimate,
     .load_state = ram_load,
     .save_cleanup = ram_save_cleanup,
+    .recv_channels_create = ram_recv_channels_create,
     .load_setup = ram_load_setup,
     .load_cleanup = ram_load_cleanup,
     .resume_prepare = ram_resume_prepare,
