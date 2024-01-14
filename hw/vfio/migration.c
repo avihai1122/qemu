@@ -25,6 +25,7 @@
 #include "migration/register.h"
 #include "migration/blocker.h"
 #include "migration/misc.h"
+#include "migration/yank_functions.h"
 #include "qapi/error.h"
 #include "exec/ramlist.h"
 #include "exec/ram_addr.h"
@@ -346,7 +347,94 @@ static bool vfio_precopy_supported(VFIODevice *vbasedev)
     return migration->mig_flags & VFIO_MIGRATION_PRE_COPY;
 }
 
+static void vfio_send_channel_cleanup(VFIOMigration *migration)
+{
+    VFIOSendChannel *schannel = migration->channel.schannel;
+    int ret;
+
+    if (!schannel) {
+        return;
+    }
+
+    if (!schannel->ioc) {
+        goto out;
+    }
+
+    migration_ioc_unregister_yank_from_file(schannel->f);
+    ret = qemu_fclose(schannel->f);
+    if (ret) {
+        error_report("%s: Error closing QEMUFile, err: %d.\n", __func__, ret);
+    }
+
+out:
+    qemu_sem_destroy(&schannel->create_sem);
+    g_free(schannel);
+    migration->channel.schannel = NULL;
+}
+
+static void vfio_channel_create_callback(QIOChannel *ioc, void *opaque,
+                                         Error *err)
+{
+    VFIODevice *vbasedev = opaque;
+    VFIOMigration *migration = vbasedev->migration;
+    VFIOSendChannel *schannel = migration->channel.schannel;
+
+    if (err) {
+        migrate_set_error(migrate_get_current(), err);
+        error_free(err);
+        return;
+    }
+
+    migration_ioc_register_yank(ioc);
+    schannel->ioc = ioc;
+    schannel->f = qemu_file_new_output(ioc);
+    object_unref(OBJECT(ioc));
+    qemu_sem_post(&schannel->create_sem);
+}
 /* ---------------------------------------------------------------------- */
+
+static unsigned int vfio_num_channels_needed(void *opaque)
+{
+    return migrate_channel_header() ? 1 : 0;
+}
+
+static int vfio_send_channel_create(ChannelCreateLocation location,
+                                    const char *idstr, uint32_t instance_id,
+                                    void *opaque, Error **errp)
+{
+    VFIODevice *vbasedev = opaque;
+    VFIOMigration *migration = vbasedev->migration;
+    VFIOSendChannel *schannel;
+    MigChannelHeader header = {};
+    int ret;
+
+    if (!migrate_channel_header()) {
+        return 0;
+    }
+
+    if (location != CHANNEL_CREATE_LOCATION_MIG_START) {
+        return 0;
+    }
+
+    schannel = g_new0(VFIOSendChannel, 1);
+    qemu_sem_init(&schannel->create_sem, 0);
+    migration->channel.schannel = schannel;
+
+    header.channel_type = MIG_CHANNEL_TYPE_VFIO;
+    memcpy(&header.idstr, idstr, sizeof(header.idstr));
+    header.instance_id = instance_id;
+
+    ret =
+        migration_channel_connect(vfio_channel_create_callback, vbasedev->name,
+                                  vbasedev, true, &header, errp);
+    if (ret) {
+        return ret;
+    }
+
+    qemu_sem_wait(&schannel->create_sem);
+
+    return 0;
+}
 
 static int vfio_save_prepare(void *opaque, Error **errp)
 {
@@ -437,6 +525,8 @@ static void vfio_save_cleanup(void *opaque)
     if (migration->device_state == VFIO_DEVICE_STATE_STOP_COPY) {
         vfio_migration_set_state_or_reset(vbasedev, VFIO_DEVICE_STATE_STOP);
     }
+
+    vfio_send_channel_cleanup(vbasedev->migration);
 
     g_free(migration->data_buffer);
     migration->data_buffer = NULL;
@@ -678,6 +768,8 @@ static bool vfio_switchover_ack_needed(void *opaque)
 }
 
 static const SaveVMHandlers savevm_vfio_handlers = {
+    .num_channels_needed = vfio_num_channels_needed,
+    .send_channels_create = vfio_send_channel_create,
     .save_prepare = vfio_save_prepare,
     .save_setup = vfio_save_setup,
     .save_cleanup = vfio_save_cleanup,

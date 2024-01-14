@@ -31,6 +31,7 @@
 #endif
 #include "sysemu/sysemu.h"
 #include "hw/vfio/vfio-container-base.h"
+#include "io/channel.h"
 
 #define VFIO_MSG_PREFIX "vfio %s: "
 
@@ -59,6 +60,12 @@ typedef struct VFIORegion {
     uint8_t nr; /* cache the region number for debug */
 } VFIORegion;
 
+typedef struct {
+    QemuSemaphore create_sem;
+    QIOChannel *ioc;
+    QEMUFile *f;
+} VFIOSendChannel;
+
 typedef struct VFIOMigration {
     struct VFIODevice *vbasedev;
     VMChangeStateEntry *vm_state;
@@ -71,6 +78,9 @@ typedef struct VFIOMigration {
     uint64_t precopy_init_size;
     uint64_t precopy_dirty_size;
     bool initial_data_sent;
+    union {
+        VFIOSendChannel *schannel;
+    } channel;
 } VFIOMigration;
 
 struct VFIOGroup;

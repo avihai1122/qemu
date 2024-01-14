@@ -32,6 +32,7 @@ typedef enum {
     MIG_CHANNEL_TYPE_MAIN,
     MIG_CHANNEL_TYPE_POSTCOPY_PREEMPT,
     MIG_CHANNEL_TYPE_MULTIFD,
+    MIG_CHANNEL_TYPE_VFIO,
 } MigChannelTypes;
 
 typedef struct {
