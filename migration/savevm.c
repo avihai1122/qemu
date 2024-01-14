@@ -2782,6 +2782,30 @@ static void qemu_loadvm_state_switchover_ack_needed(MigrationIncomingState *mis)
     trace_loadvm_state_switchover_ack_needed(mis->switchover_ack_pending_num);
 }
 
+int qemu_loadvm_state_recv_channels_create(MigChannelHeader *header,
+                                           QIOChannel *ioc, Error **errp)
+{
+    SaveStateEntry *se;
+
+    se = find_se(header->idstr, header->instance_id);
+    if (se == NULL) {
+        error_setg(errp, "Unknown SaveStateEntry idstr %s or instance id %u",
+                   header->idstr, header->instance_id);
+        return -EINVAL;
+    }
+
+    if (!se->ops || !se->ops->recv_channels_create) {
+        error_setg(errp,
+                   "SaveStateEntry with idstr %s and instance id %u doesn't "
+                   "support receive channel createion",
+                   header->idstr, header->instance_id);
+        return -EOPNOTSUPP;
+    }
+
+    return se->ops->recv_channels_create(header->channel_type, ioc, se->opaque,
+                                         errp);
+}
+
 static int qemu_loadvm_state_setup(QEMUFile *f)
 {
     SaveStateEntry *se;

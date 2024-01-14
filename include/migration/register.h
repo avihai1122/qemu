@@ -15,6 +15,7 @@
 #define MIGRATION_REGISTER_H
 
 #include "hw/vmstate-if.h"
+#include "migration/channel.h"
 
 typedef enum {
     CHANNEL_CREATE_LOCATION_PRE_RESUME,
@@ -83,6 +84,8 @@ typedef struct SaveVMHandlers {
     void (*state_pending_exact)(void *opaque, uint64_t *must_precopy,
                                 uint64_t *can_postcopy);
     LoadStateHandler *load_state;
+    int (*recv_channels_create)(MigChannelTypes channel_type, QIOChannel *ioc,
+                                void *opaque, Error **errp);
     int (*load_setup)(QEMUFile *f, void *opaque);
     int (*load_cleanup)(void *opaque);
     /* Called when postcopy migration wants to resume from failure */
