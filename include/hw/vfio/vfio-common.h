@@ -76,6 +76,11 @@ typedef struct {
     QemuSemaphore iterate_sem;
 } VFIOSendChannel;
 
+typedef struct {
+    QIOChannel *ioc;
+    QEMUFile *f;
+} VFIORecvChannel;
+
 typedef struct VFIOMigration {
     struct VFIODevice *vbasedev;
     VMChangeStateEntry *vm_state;
@@ -90,6 +95,7 @@ typedef struct VFIOMigration {
     bool initial_data_sent;
     union {
         VFIOSendChannel *schannel;
+        VFIORecvChannel *rchannel;
     } channel;
 } VFIOMigration;
 

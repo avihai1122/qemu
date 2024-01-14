@@ -555,6 +555,25 @@ static void vfio_channel_create_callback(QIOChannel *ioc, void *opaque,
     qemu_sem_post(&schannel->create_sem);
 }
 
+static void vfio_recv_channel_cleanup(VFIOMigration *migration)
+{
+    VFIORecvChannel *rchannel = migration->channel.rchannel;
+    int ret;
+
+    if (!rchannel) {
+        return;
+    }
+
+    migration_ioc_unregister_yank_from_file(rchannel->f);
+    ret = qemu_fclose(rchannel->f);
+    if (ret) {
+        error_report("%s: Error closing QEMUFile, err: %d.\n", __func__, ret);
+    }
+
+    g_free(rchannel);
+    migration->channel.rchannel = NULL;
+}
+
 static bool vfio_channel_needed(void)
 {
     return migrate_channel_header();
@@ -836,6 +855,34 @@ static void vfio_save_state(QEMUFile *f, void *opaque)
     }
 }
 
+static int vfio_recv_channel_create(MigChannelTypes channel_type,
+                                    QIOChannel *ioc, void *opaque, Error **errp)
+{
+    VFIODevice *vbasedev = opaque;
+    VFIOMigration *migration = vbasedev->migration;
+    VFIORecvChannel *rchannel;
+
+    if (channel_type != MIG_CHANNEL_TYPE_VFIO) {
+        error_setg(errp, "Invalid migration channel type %u", channel_type);
+        return -EINVAL;
+    }
+
+    rchannel = g_new0(VFIORecvChannel, 1);
+    rchannel->ioc = ioc;
+    rchannel->f = qemu_file_new_input(ioc);
+    migration->channel.rchannel = rchannel;
+
+    return 0;
+}
+
+static bool vfio_recv_channel_created(void *opaque)
+{
+    VFIODevice *vbasedev = opaque;
+    VFIOMigration *migration = vbasedev->migration;
+
+    return migration->channel.rchannel;
+}
+
 static int vfio_load_setup(QEMUFile *f, void *opaque)
 {
     VFIODevice *vbasedev = opaque;
@@ -848,6 +895,7 @@ static int vfio_load_cleanup(void *opaque)
 {
     VFIODevice *vbasedev = opaque;
 
+    vfio_recv_channel_cleanup(vbasedev->migration);
     vfio_migration_cleanup(vbasedev);
     trace_vfio_load_cleanup(vbasedev->name);
 
@@ -946,6 +994,8 @@ static const SaveVMHandlers savevm_vfio_handlers = {
     .save_live_iterate = vfio_save_iterate,
     .save_live_complete_precopy = vfio_save_complete_precopy,
     .save_state = vfio_save_state,
+    .recv_channels_create = vfio_recv_channel_create,
+    .recv_channels_created = vfio_recv_channel_created,
     .load_setup = vfio_load_setup,
     .load_cleanup = vfio_load_cleanup,
     .load_state = vfio_load_state,

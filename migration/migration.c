@@ -977,6 +977,7 @@ void migration_ioc_process_incoming(QIOChannel *ioc, Error **errp)
         break;
     case MIG_CHANNEL_TYPE_POSTCOPY_PREEMPT:
     case MIG_CHANNEL_TYPE_MULTIFD:
+    case MIG_CHANNEL_TYPE_VFIO:
         ret = qemu_loadvm_state_recv_channels_create(&header, ioc, errp);
         if (ret) {
             return;
