@@ -49,6 +49,7 @@
 #define VFIO_MIG_FLAG_DEV_SETUP_STATE   (0xffffffffef100003ULL)
 #define VFIO_MIG_FLAG_DEV_DATA_STATE    (0xffffffffef100004ULL)
 #define VFIO_MIG_FLAG_DEV_INIT_DATA_SENT (0xffffffffef100005ULL)
+#define VFIO_MIG_FLAG_END_OF_CHANNEL    (0xffffffffef100006ULL)
 
 /*
  * This is an arbitrary size based on migration of mlx5 devices, where typically
@@ -347,6 +348,159 @@ static bool vfio_precopy_supported(VFIODevice *vbasedev)
     return migration->mig_flags & VFIO_MIGRATION_PRE_COPY;
 }
 
+static int vfio_save_iterate_internal(QEMUFile *f, VFIODevice *vbasedev)
+{
+    VFIOMigration *migration = vbasedev->migration;
+    ssize_t data_size;
+
+    data_size = vfio_save_block(f, migration);
+    if (data_size < 0) {
+        return data_size;
+    }
+
+    vfio_update_estimated_pending_data(migration, data_size);
+
+    if (migrate_switchover_ack() && !migration->precopy_init_size &&
+        !migration->initial_data_sent) {
+        qemu_put_be64(f, VFIO_MIG_FLAG_DEV_INIT_DATA_SENT);
+        migration->initial_data_sent = true;
+    } else {
+        qemu_put_be64(f, VFIO_MIG_FLAG_END_OF_STATE);
+    }
+
+    trace_vfio_save_iterate(vbasedev->name, migration->precopy_init_size,
+                            migration->precopy_dirty_size);
+
+    /*
+     * A VFIO device's pre-copy dirty_bytes is not guaranteed to reach zero.
+     * Return 1 so following handlers will not be potentially blocked.
+     */
+    return 1;
+}
+
+static int vfio_save_complete_precopy_internal(QEMUFile *f,
+                                               VFIODevice *vbasedev)
+{
+    ssize_t data_size;
+    int ret;
+
+    /* We reach here with device state STOP or STOP_COPY only */
+    ret = vfio_migration_set_state(vbasedev, VFIO_DEVICE_STATE_STOP_COPY,
+                                   VFIO_DEVICE_STATE_STOP);
+    if (ret) {
+        return ret;
+    }
+
+    do {
+        data_size = vfio_save_block(f, vbasedev->migration);
+        if (data_size < 0) {
+            return data_size;
+        }
+    } while (data_size);
+
+    qemu_put_be64(f, VFIO_MIG_FLAG_END_OF_STATE);
+    ret = qemu_file_get_error(f);
+    if (ret) {
+        return ret;
+    }
+
+    trace_vfio_save_complete_precopy(vbasedev->name, ret);
+
+    return ret;
+}
+
+static int vfio_send_channel_post_job(VFIODevice *vbasedev,
+                                      VFIOChannelJobType type)
+{
+    VFIOMigration *migration = vbasedev->migration;
+    VFIOSendChannel *schannel = migration->channel.schannel;
+
+    switch (type) {
+    case VFIO_CHANNEL_JOB_TYPE_ITERATE:
+        schannel->job_type = type;
+        qemu_sem_post(&schannel->job_sem);
+        /* Wait for the iterate job to finish */
+        qemu_sem_wait(&schannel->iterate_sem);
+        break;
+    case VFIO_CHANNEL_JOB_TYPE_COMPLETE_PRECOPY:
+        schannel->job_type = type;
+        qemu_sem_post(&schannel->job_sem);
+        break;
+    default:
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+static int vfio_send_thread_handle_job(VFIODevice *vbasedev)
+{
+    VFIOMigration *migration = vbasedev->migration;
+    VFIOSendChannel *schannel = migration->channel.schannel;
+    int ret;
+
+    switch (schannel->job_type) {
+    case VFIO_CHANNEL_JOB_TYPE_ITERATE:
+        ret = vfio_save_iterate_internal(schannel->f, vbasedev);
+        if (ret < 0) {
+            return ret;
+        }
+
+        /* TODO: Is this needed? */
+        qemu_fflush(schannel->f);
+
+        qemu_sem_post(&schannel->iterate_sem);
+
+        return 0;
+    case VFIO_CHANNEL_JOB_TYPE_COMPLETE_PRECOPY:
+        ret = vfio_save_complete_precopy_internal(schannel->f, vbasedev);
+        if (ret) {
+            error_report("AH: handle COMPLETE PRECOPY job. ret=%d.", ret);
+            return ret;
+        }
+
+        qemu_put_be64(schannel->f, VFIO_MIG_FLAG_END_OF_CHANNEL);
+        error_report("AH: END OF CHANNEL sent.");
+        qemu_fflush(schannel->f);
+
+        return 0;
+    default:
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+static void *vfio_send_thread(void *opaque)
+{
+    VFIODevice *vbasedev = opaque;
+    VFIOMigration *migration = vbasedev->migration;
+    VFIOSendChannel *schannel = migration->channel.schannel;
+    int ret;
+
+    while (!schannel->quit) {
+        qemu_sem_wait(&schannel->job_sem);
+
+        if (schannel->quit) {
+            break;
+        }
+
+        ret = vfio_send_thread_handle_job(vbasedev);
+        if (ret) {
+            break;
+        }
+    }
+
+    return NULL;
+}
+
+static void vfio_send_channel_join(VFIOSendChannel *schannel)
+{
+    schannel->quit = true;
+    qemu_sem_post(&schannel->job_sem);
+    qemu_thread_join(&schannel->thread);
+}
+
 static void vfio_send_channel_cleanup(VFIOMigration *migration)
 {
     VFIOSendChannel *schannel = migration->channel.schannel;
@@ -360,6 +514,11 @@ static void vfio_send_channel_cleanup(VFIOMigration *migration)
         goto out;
     }
 
+    if (!schannel->quit) {
+        vfio_send_channel_join(schannel);
+    }
+    qemu_sem_destroy(&schannel->iterate_sem);
+    qemu_sem_destroy(&schannel->job_sem);
     migration_ioc_unregister_yank_from_file(schannel->f);
     ret = qemu_fclose(schannel->f);
     if (ret) {
@@ -389,8 +548,18 @@ static void vfio_channel_create_callback(QIOChannel *ioc, void *opaque,
     schannel->ioc = ioc;
     schannel->f = qemu_file_new_output(ioc);
     object_unref(OBJECT(ioc));
+    qemu_sem_init(&schannel->job_sem, 0);
+    qemu_sem_init(&schannel->iterate_sem, 0);
+    qemu_thread_create(&schannel->thread, vbasedev->name, vfio_send_thread,
+                       vbasedev, QEMU_THREAD_JOINABLE);
     qemu_sem_post(&schannel->create_sem);
 }
+
+static bool vfio_channel_needed(void)
+{
+    return migrate_channel_header();
+}
+
 /* ---------------------------------------------------------------------- */
 
 static unsigned int vfio_num_channels_needed(void *opaque)
@@ -434,6 +603,23 @@ static int vfio_send_channel_create(ChannelCreateLocation location,
     qemu_sem_wait(&schannel->create_sem);
 
     return 0;
+}
+
+static void vfio_send_channel_wait(void *opaque)
+{
+    VFIODevice *vbasedev = opaque;
+    VFIOMigration *migration = vbasedev->migration;
+    VFIOSendChannel *schannel = migration->channel.schannel;
+
+    if (!schannel) {
+        return;
+    }
+
+    if (!schannel->ioc) {
+        return;
+    }
+
+    vfio_send_channel_join(schannel);
 }
 
 static int vfio_save_prepare(void *opaque, Error **errp)
@@ -598,63 +784,43 @@ static bool vfio_is_active_iterate(void *opaque)
 static int vfio_save_iterate(QEMUFile *f, void *opaque)
 {
     VFIODevice *vbasedev = opaque;
-    VFIOMigration *migration = vbasedev->migration;
-    ssize_t data_size;
+    int ret;
 
-    data_size = vfio_save_block(f, migration);
-    if (data_size < 0) {
-        return data_size;
-    }
+    if (vfio_channel_needed()) {
+        ret =
+            vfio_send_channel_post_job(vbasedev, VFIO_CHANNEL_JOB_TYPE_ITERATE);
+        if (ret < 0) {
+            return ret;
+        }
 
-    vfio_update_estimated_pending_data(migration, data_size);
-
-    if (migrate_switchover_ack() && !migration->precopy_init_size &&
-        !migration->initial_data_sent) {
-        qemu_put_be64(f, VFIO_MIG_FLAG_DEV_INIT_DATA_SENT);
-        migration->initial_data_sent = true;
-    } else {
+        /* Skip vfio_load_state() on main channel */
         qemu_put_be64(f, VFIO_MIG_FLAG_END_OF_STATE);
+
+        return 1;
     }
 
-    trace_vfio_save_iterate(vbasedev->name, migration->precopy_init_size,
-                            migration->precopy_dirty_size);
-
-    /*
-     * A VFIO device's pre-copy dirty_bytes is not guaranteed to reach zero.
-     * Return 1 so following handlers will not be potentially blocked.
-     */
-    return 1;
+    return vfio_save_iterate_internal(f, vbasedev);
 }
 
 static int vfio_save_complete_precopy(QEMUFile *f, void *opaque)
 {
     VFIODevice *vbasedev = opaque;
-    ssize_t data_size;
     int ret;
 
-    /* We reach here with device state STOP or STOP_COPY only */
-    ret = vfio_migration_set_state(vbasedev, VFIO_DEVICE_STATE_STOP_COPY,
-                                   VFIO_DEVICE_STATE_STOP);
-    if (ret) {
-        return ret;
-    }
-
-    do {
-        data_size = vfio_save_block(f, vbasedev->migration);
-        if (data_size < 0) {
-            return data_size;
+    if (vfio_channel_needed()) {
+        ret = vfio_send_channel_post_job(
+            vbasedev, VFIO_CHANNEL_JOB_TYPE_COMPLETE_PRECOPY);
+        if (ret) {
+            return ret;
         }
-    } while (data_size);
 
-    qemu_put_be64(f, VFIO_MIG_FLAG_END_OF_STATE);
-    ret = qemu_file_get_error(f);
-    if (ret) {
-        return ret;
+        /* Skip main channel vfio_load_state() */
+        qemu_put_be64(f, VFIO_MIG_FLAG_END_OF_STATE);
+
+        return qemu_file_get_error(f);
     }
 
-    trace_vfio_save_complete_precopy(vbasedev->name, ret);
-
-    return ret;
+    return vfio_save_complete_precopy_internal(f, vbasedev);
 }
 
 static void vfio_save_state(QEMUFile *f, void *opaque)
@@ -770,6 +936,7 @@ static bool vfio_switchover_ack_needed(void *opaque)
 static const SaveVMHandlers savevm_vfio_handlers = {
     .num_channels_needed = vfio_num_channels_needed,
     .send_channels_create = vfio_send_channel_create,
+    .send_channels_wait = vfio_send_channel_wait,
     .save_prepare = vfio_save_prepare,
     .save_setup = vfio_save_setup,
     .save_cleanup = vfio_save_cleanup,

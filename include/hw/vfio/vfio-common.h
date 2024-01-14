@@ -60,10 +60,20 @@ typedef struct VFIORegion {
     uint8_t nr; /* cache the region number for debug */
 } VFIORegion;
 
+typedef enum {
+    VFIO_CHANNEL_JOB_TYPE_ITERATE,
+    VFIO_CHANNEL_JOB_TYPE_COMPLETE_PRECOPY,
+} VFIOChannelJobType;
+
 typedef struct {
     QemuSemaphore create_sem;
     QIOChannel *ioc;
     QEMUFile *f;
+    QemuThread thread;
+    bool quit;
+    QemuSemaphore job_sem;
+    VFIOChannelJobType job_type;
+    QemuSemaphore iterate_sem;
 } VFIOSendChannel;
 
 typedef struct VFIOMigration {
