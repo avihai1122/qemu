@@ -2806,6 +2806,23 @@ int qemu_loadvm_state_recv_channels_create(MigChannelHeader *header,
                                          errp);
 }
 
+bool qemu_loadvm_state_recv_channels_created(void)
+{
+    SaveStateEntry *se;
+
+    QTAILQ_FOREACH(se, &savevm_state.handlers, entry) {
+        if (!se->ops || !se->ops->recv_channels_created) {
+            continue;
+        }
+
+        if (!se->ops->recv_channels_created(se->opaque)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static int qemu_loadvm_state_setup(QEMUFile *f)
 {
     SaveStateEntry *se;

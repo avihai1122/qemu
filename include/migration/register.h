@@ -86,6 +86,7 @@ typedef struct SaveVMHandlers {
     LoadStateHandler *load_state;
     int (*recv_channels_create)(MigChannelTypes channel_type, QIOChannel *ioc,
                                 void *opaque, Error **errp);
+    bool (*recv_channels_created)(void *opaque);
     int (*load_setup)(QEMUFile *f, void *opaque);
     int (*load_cleanup)(void *opaque);
     /* Called when postcopy migration wants to resume from failure */

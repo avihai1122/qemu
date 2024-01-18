@@ -69,6 +69,7 @@ int qemu_save_device_state(QEMUFile *f);
 
 int qemu_loadvm_state_recv_channels_create(MigChannelHeader *header,
                                            QIOChannel *ioc, Error **errp);
+bool qemu_loadvm_state_recv_channels_created(void);
 int qemu_loadvm_state(QEMUFile *f);
 void qemu_loadvm_state_cleanup(void);
 int qemu_loadvm_state_main(QEMUFile *f, MigrationIncomingState *mis);
