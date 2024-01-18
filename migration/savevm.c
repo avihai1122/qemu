@@ -1332,6 +1332,23 @@ int qemu_savevm_state_send_channels_create(ChannelCreateLocation location,
     return 0;
 }
 
+void qemu_savevm_state_send_channels_wait(void)
+{
+    SaveStateEntry *se;
+
+    QTAILQ_FOREACH(se, &savevm_state.handlers, entry) {
+        if (!se->ops || !se->ops->send_channels_wait) {
+            continue;
+        }
+
+        if (se->ops->is_active && !se->ops->is_active(se->opaque)) {
+            continue;
+        }
+
+        se->ops->send_channels_wait(se->opaque);
+    }
+}
+
 int qemu_savevm_state_prepare(Error **errp)
 {
     SaveStateEntry *se;
@@ -1621,6 +1638,8 @@ int qemu_savevm_state_complete_precopy_non_iterable(QEMUFile *f,
         }
     }
     if (!in_postcopy) {
+        /* TODO: Need to add it to postcopy as well */
+        qemu_savevm_state_send_channels_wait();
         /* Postcopy stream will still be going */
         qemu_put_byte(f, QEMU_VM_EOF);
     }

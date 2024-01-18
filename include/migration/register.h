@@ -44,6 +44,7 @@ typedef struct SaveVMHandlers {
     int (*send_channels_create)(ChannelCreateLocation location,
                                 const char *idstr, uint32_t instance_id,
                                 void *opaque, Error **errp);
+    void (*send_channels_wait)(void *opaque);
     bool (*is_active)(void *opaque);
     bool (*has_postcopy)(void *opaque);
 
