@@ -834,15 +834,15 @@ static bool migration_should_start_incoming_header(bool main_channel)
         return false;
     }
 
-    if (migrate_multifd()) {
-        return multifd_recv_all_channels_created();
+    if (!qemu_loadvm_state_recv_channels_created()) {
+        return false;
     }
 
-    if (migrate_postcopy_preempt() && migrate_get_current()->preempt_pre_7_2) {
-        return mis->postcopy_qemufile_dst != NULL;
-    }
-
-    if (migrate_postcopy_preempt()) {
+    /*
+     * In QEMU 8.0+, the postcopy preempt channel is created after migration
+     * starts.
+     */
+    if (migrate_postcopy_preempt() && !migrate_get_current()->preempt_pre_7_2) {
         return main_channel;
     }
 
@@ -1003,6 +1003,10 @@ bool migration_has_all_channels(void)
 
     if (!mis->from_src_file) {
         return false;
+    }
+
+    if (migrate_channel_header()) {
+        return qemu_loadvm_state_recv_channels_created();
     }
 
     if (migrate_multifd()) {

@@ -3626,6 +3626,29 @@ static int ram_recv_channels_create(MigChannelTypes channel_type,
     return 0;
 }
 
+static bool ram_recv_channels_created(void *opaque)
+{
+    MigrationIncomingState *mis = migration_incoming_get_current();
+
+    if (migrate_multifd()) {
+        return multifd_recv_all_channels_created();
+    }
+
+    if (migrate_postcopy_preempt() && migrate_get_current()->preempt_pre_7_2) {
+        return mis->postcopy_qemufile_dst != NULL;
+    }
+
+    /*
+     * TODO: there is a bug here. When starting preempt thread in 8.0+ we get:
+     * socket_accept_incoming_migration: Extra incoming migration connection;
+     * ignoring.
+     * on dest side, because socket_accept_incoming_migration checks if it has
+     * all channels.
+     */
+
+    return true;
+}
+
 /**
  * ram_load_setup: Setup RAM for migration incoming side
  *
@@ -4368,6 +4391,7 @@ static SaveVMHandlers savevm_ram_handlers = {
     .load_state = ram_load,
     .save_cleanup = ram_save_cleanup,
     .recv_channels_create = ram_recv_channels_create,
+    .recv_channels_created = ram_recv_channels_created,
     .load_setup = ram_load_setup,
     .load_cleanup = ram_load_cleanup,
     .resume_prepare = ram_resume_prepare,
