@@ -3377,6 +3377,8 @@ static void *migration_thread(void *opaque)
     int64_t setup_start = qemu_clock_get_ms(QEMU_CLOCK_HOST);
     MigThrError thr_error;
     bool urgent = false;
+    Error *local_err = NULL;
+    int ret;
 
     thread = migration_threads_add("live_migration", qemu_get_thread_id());
 
@@ -3384,6 +3386,15 @@ static void *migration_thread(void *opaque)
 
     object_ref(OBJECT(s));
     update_iteration_initial_status(s);
+
+    ret = qemu_savevm_state_send_channels_create(
+        CHANNEL_CREATE_LOCATION_MIG_START, &local_err);
+    if (ret) {
+        migrate_set_error(s, local_err);
+        error_free(local_err);
+        migrate_set_state(&s->state, s->state, MIGRATION_STATUS_FAILED);
+        goto out;
+    }
 
     bql_lock();
     qemu_savevm_state_header(s->to_dst_file);
@@ -3456,6 +3467,7 @@ static void *migration_thread(void *opaque)
         urgent = migration_rate_limit();
     }
 
+out:
     trace_migration_thread_after_loop();
     migration_iteration_finish(s);
     object_unref(OBJECT(s));
